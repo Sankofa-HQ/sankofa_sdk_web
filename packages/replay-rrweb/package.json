@@ -1,0 +1,26 @@
+{
+  "name": "@sankofa/replay-rrweb",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "@sankofa/browser": "0.1.0",
+    "pako": "^2.1.0",
+    "rrweb": "^2.0.0-alpha.18"
+  }
+}

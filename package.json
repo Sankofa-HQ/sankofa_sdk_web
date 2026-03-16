@@ -1,0 +1,14 @@
+{
+  "name": "@sankofa/web-sdk",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
