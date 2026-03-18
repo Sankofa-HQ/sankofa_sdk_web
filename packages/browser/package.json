@@ -1,6 +1,19 @@
 {
   "name": "@sankofa/browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
+  },
+  "keywords": [
+    "sankofa",
+    "analytics",
+    "tracking",
+    "sdk",
+    "events",
+    "self-hosted",
+    "open-source"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -15,7 +28,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "bundle": "node esbuild.config.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "devDependencies": {
+    "esbuild": "^0.27.4"
+  }
 }
