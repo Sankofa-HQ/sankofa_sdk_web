@@ -1,6 +1,6 @@
 {
   "name": "@sankofa/react",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -19,7 +19,7 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@sankofa/browser": "0.1.0",
+    "@sankofa/browser": "0.1.2",
     "react": "^19.2.3"
   },
   "peerDependencies": {

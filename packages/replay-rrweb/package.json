@@ -1,6 +1,6 @@
 {
   "name": "@sankofa/replay-rrweb",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
@@ -32,7 +32,7 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@sankofa/browser": "0.1.0",
+    "@sankofa/browser": "0.1.2",
     "pako": "^2.1.0",
     "rrweb": "^2.0.0-alpha.18"
   },
