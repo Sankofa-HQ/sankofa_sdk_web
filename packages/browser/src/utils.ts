@@ -65,6 +65,12 @@ export function resolveReplayChunkUrl(endpoint: string): URL {
   return url;
 }
 
+export function resolveReplayConfigUrl(endpoint: string): URL {
+  const url = resolveServerBaseUrl(endpoint);
+  url.pathname = toPathname([...trimPathSegments(url.pathname), "api", "replay", "config"]);
+  return url;
+}
+
 export function serializeTransportProperties(
   properties: SankofaPropertyMap,
 ): Record<string, string> {

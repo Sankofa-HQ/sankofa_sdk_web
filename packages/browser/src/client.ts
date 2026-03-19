@@ -19,6 +19,7 @@ import {
   hashString,
   resolveBatchUrl,
   resolveReplayChunkUrl,
+  resolveReplayConfigUrl,
   serializeTransportProperties,
 } from "./utils";
 
@@ -27,12 +28,14 @@ export class SankofaBrowserClient {
     apiKey: string | null;
     batchUrl: URL | null;
     replayChunkUrl: URL | null;
+    replayConfigUrl: URL | null;
     storagePrefix: string;
     debug: boolean;
   } = {
     apiKey: null,
     batchUrl: null,
     replayChunkUrl: null,
+    replayConfigUrl: null,
     storagePrefix: "sankofa:browser",
     debug: false,
   };
@@ -60,6 +63,7 @@ export class SankofaBrowserClient {
     this.props.apiKey = options.apiKey.trim();
     this.props.batchUrl = resolveBatchUrl(options.endpoint);
     this.props.replayChunkUrl = resolveReplayChunkUrl(options.endpoint);
+    this.props.replayConfigUrl = resolveReplayConfigUrl(options.endpoint);
     this.props.debug = Boolean(options.debug);
     this.flushIntervalMs = options.flushIntervalMs ?? 5_000;
     this.props.storagePrefix = `sankofa:${hashString(
@@ -202,10 +206,10 @@ export class SankofaBrowserClient {
     const previous = this.getSnapshot();
 
     await this.flush({ reason: "reset" });
-    
+
     const idChange = this.identity.reset();
     const nextSession = this.session.startNewSession();
-    
+
     const current = this.getSnapshot();
     await this.plugins.notifyDistinctIdChange(current, previous);
     await this.plugins.notifySessionChange(current, previous);
@@ -240,6 +244,7 @@ export class SankofaBrowserClient {
       apiKey: this.props.apiKey!,
       batchUrl: this.props.batchUrl!.toString(),
       replayChunkUrl: this.props.replayChunkUrl!.toString(),
+      replayConfigUrl: this.props.replayConfigUrl!.toString(),
       distinctId: idState.distinctId,
       anonymousId: idState.anonymousId,
       identifiedId: idState.identifiedId,
@@ -305,10 +310,10 @@ export class SankofaBrowserClient {
   }
 
   private async fetchReplayConfig(): Promise<SankofaReplayConfig | null> {
-    const endpoint = this.props.batchUrl?.origin;
-    if (!endpoint || !this.props.apiKey) return null;
+    const url = this.props.replayConfigUrl;
+    if (!url || !this.props.apiKey) return null;
 
-    const res = await fetch(`${endpoint}/api/v1/replay/config`, {
+    const res = await fetch(url.toString(), {
       headers: {
         "x-api-key": this.props.apiKey,
       },

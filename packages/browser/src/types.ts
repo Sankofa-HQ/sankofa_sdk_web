@@ -38,15 +38,15 @@ export type SankofaBatchOperation =
 export interface SankofaFlushOptions {
   keepalive?: boolean;
   reason?:
-    | "timer"
-    | "manual"
-    | "pagehide"
-    | "visibilitychange"
-    | "identify"
-    | "reset"
-    | "shutdown"
-    | "plugin"
-    | "buffer";
+  | "timer"
+  | "manual"
+  | "pagehide"
+  | "visibilitychange"
+  | "identify"
+  | "reset"
+  | "shutdown"
+  | "plugin"
+  | "buffer";
 }
 
 export interface SankofaAutocaptureOptions {
@@ -66,6 +66,7 @@ export interface SankofaClientSnapshot {
   apiKey: string;
   batchUrl: string;
   replayChunkUrl: string;
+  replayConfigUrl: string;
   distinctId: string;
   anonymousId: string;
   identifiedId: string | null;
