@@ -53,6 +53,15 @@ export interface SankofaAutocaptureOptions {
   pageviews?: boolean;
 }
 
+export interface SankofaReplayConfig {
+  enabled: boolean;
+  sample_rate: number;
+  high_fidelity_triggers: string[];
+  high_fidelity_duration_seconds: number;
+  mask_all_inputs: boolean;
+  capture_network: boolean;
+}
+
 export interface SankofaClientSnapshot {
   apiKey: string;
   batchUrl: string;
@@ -69,6 +78,8 @@ export interface SankofaPluginContext {
   debug(message: string, ...details: unknown[]): void;
   getSnapshot(): SankofaClientSnapshot;
   touchSession(source?: string): SankofaClientSnapshot;
+  replayConfig?: SankofaReplayConfig;
+  triggerHighFidelity?(): void;
 }
 
 export interface SankofaPluginInstance {
@@ -82,6 +93,7 @@ export interface SankofaPluginInstance {
     current: SankofaClientSnapshot,
     previous: SankofaClientSnapshot,
   ): Promise<void> | void;
+  onHighFidelity?(): Promise<void> | void;
 }
 
 export interface SankofaPlugin {

@@ -43,10 +43,18 @@ export function rrwebReplayPlugin(
   return {
     name: "rrweb-replay",
     setup(context: SankofaPluginContext) {
+      const remoteConfig = (context as any).replayConfig as any;
       const config = {
         ...DEFAULT_OPTIONS,
         ...options,
+        // Override with remote config if available
+        enabled: remoteConfig ? remoteConfig.enabled : (options.enabled ?? DEFAULT_OPTIONS.enabled),
+        maskAllInputs: remoteConfig ? remoteConfig.mask_all_inputs : (options.maskAllInputs ?? DEFAULT_OPTIONS.maskAllInputs),
       };
+
+      // Initial Sampling
+      const isSampledIn = remoteConfig ? Math.random() < remoteConfig.sample_rate : true;
+      let isForcedHighFidelity = false;
 
       if (!config.enabled || typeof window === "undefined") {
         return {};
@@ -60,6 +68,49 @@ export function rrwebReplayPlugin(
       let chunkStartedAt: number | null = null;
       let stopRecording: (() => void) | undefined;
       let flushTimer: number | null = null;
+
+      const stopAndCleanup = () => {
+        if (flushTimer !== null) {
+          window.clearInterval(flushTimer);
+          flushTimer = null;
+        }
+        stopRecording?.();
+        stopRecording = undefined;
+      };
+
+      const startRecording = () => {
+        if (stopRecording) return;
+        
+        stopRecording = record({
+          emit(event) {
+            if (buffer.length === 0) {
+              snapshot = context.getSnapshot();
+              bufferSessionId = snapshot.sessionId;
+              bufferDistinctId = snapshot.distinctId;
+              chunkStartedAt = event.timestamp;
+            }
+
+            buffer.push(event);
+            if (buffer.length >= config.maxEventsPerChunk) {
+              void flushBufferedChunk({
+                reason: "buffer",
+              });
+            }
+          },
+          maskAllInputs: config.maskAllInputs,
+          blockSelector: options.blockSelector,
+          maskTextSelector: options.maskSelector,
+          ignoreSelector: options.ignoreSelector,
+        });
+
+        if (flushTimer === null) {
+          flushTimer = window.setInterval(() => {
+            void flushBufferedChunk({
+              reason: "timer",
+            });
+          }, config.flushIntervalMs);
+        }
+      };
 
       const queue = createPersistentQueue<QueuedReplayChunk>({
         dbName: `${snapshot.projectNamespace}:replay`,
@@ -165,33 +216,9 @@ export function rrwebReplayPlugin(
         }
       };
 
-      stopRecording = record({
-        emit(event) {
-          if (buffer.length === 0) {
-            snapshot = context.getSnapshot();
-            bufferSessionId = snapshot.sessionId;
-            bufferDistinctId = snapshot.distinctId;
-            chunkStartedAt = event.timestamp;
-          }
-
-          buffer.push(event);
-          if (buffer.length >= config.maxEventsPerChunk) {
-            void flushBufferedChunk({
-              reason: "buffer",
-            });
-          }
-        },
-        maskAllInputs: config.maskAllInputs,
-        blockSelector: options.blockSelector,
-        maskTextSelector: options.maskSelector,
-        ignoreSelector: options.ignoreSelector,
-      });
-
-      flushTimer = window.setInterval(() => {
-        void flushBufferedChunk({
-          reason: "timer",
-        });
-      }, config.flushIntervalMs);
+      if (isSampledIn) {
+        startRecording();
+      }
 
       return {
         async flush(flushOptions?: SankofaFlushOptions) {
@@ -225,6 +252,35 @@ export function rrwebReplayPlugin(
           });
           snapshot = current;
           chunkIndex = 0;
+          
+          // Re-evaluate sampling for new session
+          if (!isForcedHighFidelity) {
+              const sampled = remoteConfig ? Math.random() < remoteConfig.sample_rate : true;
+              if (sampled) {
+                  startRecording();
+              } else {
+                  stopAndCleanup();
+              }
+          }
+        },
+        async onHighFidelity() {
+          context.debug("Plugin triggered High Fidelity Mode");
+          isForcedHighFidelity = true;
+          startRecording();
+          
+          // In rrweb, "High Fidelity" mostly means "Definitely Record".
+          // We could also potentially change sampling rates or capture mouse interactions 
+          // more aggressively if they were disabled, but for now, we just ensure it's ON.
+          
+          if (remoteConfig?.high_fidelity_duration_seconds) {
+              window.setTimeout(() => {
+                  isForcedHighFidelity = false;
+                  // If we weren't sampled in, stop recording after the burst
+                  if (!isSampledIn) {
+                      stopAndCleanup();
+                  }
+              }, remoteConfig.high_fidelity_duration_seconds * 1000);
+          }
         },
       };
     },

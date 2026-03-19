@@ -70,6 +70,20 @@ export class SankofaPluginManager {
     );
   }
 
+  async notifyHighFidelity(): Promise<void> {
+    await Promise.all(
+      this.plugins.map(async (plugin) => {
+        try {
+          if (plugin.onHighFidelity) {
+            await plugin.onHighFidelity();
+          }
+        } catch (error) {
+          this.debug("Plugin high fidelity hook failed", error);
+        }
+      }),
+    );
+  }
+
   async flush(options: SankofaFlushOptions): Promise<void> {
     await Promise.all(
       this.plugins.map(async (plugin) => {

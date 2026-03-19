@@ -11,6 +11,7 @@ import type {
   SankofaFlushOptions,
   SankofaInitOptions,
   SankofaPropertyMap,
+  SankofaReplayConfig,
   SankofaTrackPayload,
 } from "./types";
 import {
@@ -35,6 +36,7 @@ export class SankofaBrowserClient {
     storagePrefix: "sankofa:browser",
     debug: false,
   };
+  private replayConfig: SankofaReplayConfig | null = null;
 
   private identity!: SankofaIdentity;
   private session!: SankofaSessionManager;
@@ -87,19 +89,25 @@ export class SankofaBrowserClient {
       onActivity: (source) => this.touchSession(source),
     });
 
-    await this.plugins.setup(options.plugins ?? [], {
-      debug: (msg, ...details) => this.debug(msg, ...details),
-      getSnapshot: () => this.getSnapshot(),
-      touchSession: (source) => this.touchSession(source),
-    });
-
-    this.lifecycle.install();
-    this.activity.install();
-
     const autocaptureOpts = normalizeAutocapture(options.autocapture);
     if (autocaptureOpts.pageviews) {
       this.autocapture.install();
     }
+
+    // Remote Configuration Sync
+    try {
+      this.replayConfig = await this.fetchReplayConfig();
+    } catch (error) {
+      this.debug("Failed to fetch remote config, using defaults", error);
+    }
+
+    await this.plugins.setup(options.plugins ?? [], {
+      debug: (msg, ...details) => this.debug(msg, ...details),
+      getSnapshot: () => this.getSnapshot(),
+      touchSession: (source) => this.touchSession(source),
+      replayConfig: this.replayConfig ?? undefined,
+      triggerHighFidelity: () => this.plugins.notifyHighFidelity(),
+    });
 
     this.intervalId = window.setInterval(() => {
       void this.flush({ reason: "timer" });
@@ -128,6 +136,12 @@ export class SankofaBrowserClient {
 
     await this.queue.enqueue({ type: "track", payload });
     this.debug(`📝 Tracked: ${eventName}`);
+
+    // Check for High Fidelity Triggers
+    if (this.replayConfig && this.replayConfig.high_fidelity_triggers.includes(eventName)) {
+        this.debug(`🚀 High Fidelity Trigger fired: ${eventName}`);
+        void this.plugins.notifyHighFidelity();
+    }
   }
 
   async identify(userId: string, traits?: SankofaPropertyMap): Promise<void> {
@@ -288,6 +302,22 @@ export class SankofaBrowserClient {
       $current_url: window.location.href,
       $timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     };
+  }
+
+  private async fetchReplayConfig(): Promise<SankofaReplayConfig | null> {
+    const endpoint = this.props.batchUrl?.origin;
+    if (!endpoint || !this.props.apiKey) return null;
+
+    const res = await fetch(`${endpoint}/api/v1/replay/config`, {
+      headers: {
+        "x-api-key": this.props.apiKey,
+      },
+    }).catch(() => null);
+
+    if (res?.ok) {
+      return (await res.json()) as SankofaReplayConfig;
+    }
+    return null;
   }
 
   private assertReady(): void {
