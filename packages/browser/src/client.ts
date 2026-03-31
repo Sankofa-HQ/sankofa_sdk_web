@@ -289,19 +289,39 @@ export class SankofaBrowserClient {
   private buildDefaultProperties(): Record<string, string> {
     if (typeof window === "undefined") return {};
 
+    const ua = navigator.userAgent;
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    
+    let os = "Other";
+    if (/Windows/i.test(ua)) os = "Windows";
+    else if (/Mac/i.test(ua)) os = "MacOS";
+    else if (/Android/i.test(ua)) os = "Android";
+    else if (/iPhone|iPad|iPod/i.test(ua)) os = "iOS";
+    else if (/Linux/i.test(ua)) os = "Linux";
+
+    let browser = "Other";
+    if (/Chrome/i.test(ua)) browser = "Chrome";
+    else if (/Safari/i.test(ua)) browser = "Safari";
+    else if (/Firefox/i.test(ua)) browser = "Firefox";
+    else if (/MSIE|Trident/i.test(ua)) browser = "Internet Explorer";
+    else if (/Edge/i.test(ua)) browser = "Edge";
+
     const navigatorWithUAData = navigator as Navigator & {
       userAgentData?: { platform?: string };
     };
 
     return {
       $lib: "sankofa-browser",
+      $os: os,
+      $browser: browser,
       $screen_width: String(window.screen.width),
       $screen_height: String(window.screen.height),
+      $screen_dpi: String(window.devicePixelRatio * 96), // Standard web DPI approximation
       $viewport_width: String(window.innerWidth),
       $viewport_height: String(window.innerHeight),
       $language: navigator.language || "",
       $platform: navigatorWithUAData.userAgentData?.platform ?? navigator.platform ?? "",
-      $user_agent: navigator.userAgent ?? "",
+      $user_agent: ua,
       $referrer: document.referrer || "",
       $pathname: window.location.pathname,
       $current_url: window.location.href,
