@@ -1,18 +1,22 @@
 import type { SankofaFlushOptions } from "./types";
+import { SankofaSessionManager } from "./session";
 
 export class SankofaLifecycleObserver {
   private onFlush: (options: SankofaFlushOptions) => Promise<void>;
-  private onActivity: (source: string) => void;
+  private onTrack: (eventName: string, props?: any) => Promise<void>;
+  private session: SankofaSessionManager;
   
   private visibilityListener: (() => void) | null = null;
   private pagehideListener: ((event: PageTransitionEvent) => void) | null = null;
 
   constructor(options: {
     onFlush: (options: SankofaFlushOptions) => Promise<void>;
-    onActivity: (source: string) => void;
+    onTrack: (eventName: string, props?: any) => Promise<void>;
+    session: SankofaSessionManager;
   }) {
     this.onFlush = options.onFlush;
-    this.onActivity = options.onActivity;
+    this.onTrack = options.onTrack;
+    this.session = options.session;
   }
 
   install(): void {
@@ -22,13 +26,23 @@ export class SankofaLifecycleObserver {
 
     this.visibilityListener = () => {
       if (document.visibilityState === "hidden") {
+        // 🚀 Snapshot the exit time
+        this.session.setLastBackgroundTime();
+        
+        void this.onTrack("$app_backgrounded");
         void this.onFlush({
           keepalive: true,
           reason: "visibilitychange",
         });
         return;
       }
-      this.onActivity("visibilitychange");
+      
+      // 🚀 Return to Foreground
+      const { rotated } = this.session.refresh();
+      if (rotated) {
+        void this.onTrack("$session_start");
+      }
+      void this.onTrack("$app_foregrounded");
     };
 
     this.pagehideListener = () => {

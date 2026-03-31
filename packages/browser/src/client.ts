@@ -52,6 +52,8 @@ export class SankofaBrowserClient {
   private flushIntervalMs = 5_000;
   private intervalId: number | null = null;
   private _isInitialized = false;
+  private _currentScreen = "Unknown";
+  private _isManualScreen = false;
 
   async init(options: SankofaInitOptions): Promise<SankofaBrowserClient> {
     if (typeof window === "undefined") {
@@ -90,7 +92,8 @@ export class SankofaBrowserClient {
     });
     this.lifecycle = new SankofaLifecycleObserver({
       onFlush: (opts) => this.flush(opts),
-      onActivity: (source) => this.touchSession(source),
+      onTrack: (name, props) => this.track(name, props),
+      session: this.session,
     });
 
     const autocaptureOpts = normalizeAutocapture(options.autocapture);
@@ -117,22 +120,54 @@ export class SankofaBrowserClient {
       void this.flush({ reason: "timer" });
     }, this.flushIntervalMs);
 
+    // 🚀 Session Lifecycle Boot
+    const { rotated } = this.session.refresh();
+    
+    // First Time Open Logic
+    const firstOpenKey = `${this.props.storagePrefix}:first_open`;
+    if (!localStorage.getItem(firstOpenKey)) {
+        localStorage.setItem(firstOpenKey, "true");
+        await this.track("$app_open_first_time");
+    }
+
+    if (rotated) {
+        await this.track("$session_start");
+    }
+
     this._isInitialized = true;
     this.debug("Initialized browser SDK", this.getSnapshot());
+    
+    this.lifecycle.install();
     return this;
   }
 
+  /**
+   * Explicitly tag the screen the user is currently viewing.
+   * Crucial for building accurate Heatmaps in the Dashboard.
+   */
+  async screen(screenName: string, properties: SankofaPropertyMap = {}): Promise<void> {
+    this._currentScreen = screenName;
+    this._isManualScreen = true;
+    await this.track("$screen_view", { ...properties, $screen_name: screenName });
+  }
+
   async track(eventName: string, properties: SankofaPropertyMap = {}): Promise<void> {
-    this.assertReady();
-    const snapshot = this.touchSession("track");
+    const isFirstEvents = ["$app_open_first_time", "$session_start"].includes(eventName);
+    if (!this._isInitialized && !isFirstEvents) {
+      this.debug("❌ Sankofa.track() called before init()");
+      return;
+    }
+    
+    const snapshot = this.getSnapshot();
 
     const payload: SankofaTrackPayload = {
       event_name: eventName,
       distinct_id: snapshot.distinctId,
-      properties: {
+      properties: serializeTransportProperties({
         $session_id: snapshot.sessionId,
-        ...serializeTransportProperties(properties),
-      },
+        $screen_name: this._currentScreen,
+        ...properties,
+      }),
       default_properties: this.buildDefaultProperties(),
       timestamp: new Date().toISOString(),
       lib_version: snapshot.libVersion,

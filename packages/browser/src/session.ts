@@ -3,6 +3,7 @@ import { SESSION_TIMEOUT_MS, randomId } from "./utils";
 export interface SessionState {
   id: string;
   lastActivityAt: number;
+  lastBackgroundAt?: number;
 }
 
 export class SankofaSessionManager {
@@ -25,13 +26,23 @@ export class SankofaSessionManager {
     return this.state.id;
   }
 
-  refresh(): { previous: SessionState | null; current: SessionState } {
+  /**
+   * Refreshes the session state.
+   * Returns whether a rotation occurred.
+   */
+  refresh(): { previous: SessionState | null; current: SessionState; rotated: boolean } {
     const previous = this._state ? { ...this._state } : null;
     const now = Date.now();
     const stored = this.read();
+    let rotated = false;
 
-    if (!stored || now - stored.lastActivityAt > SESSION_TIMEOUT_MS) {
+    // 🚀 Background Rotation Logic (Enterprise Standard)
+    const lastBackground = stored?.lastBackgroundAt ?? 0;
+    const backgroundElapsed = lastBackground > 0 ? now - lastBackground : 0;
+
+    if (!stored || (lastBackground > 0 && backgroundElapsed > SESSION_TIMEOUT_MS)) {
       this._state = this.startNewSession();
+      rotated = true;
     } else {
       this._state = {
         ...stored,
@@ -40,7 +51,13 @@ export class SankofaSessionManager {
       this.save();
     }
 
-    return { previous, current: this.state };
+    return { previous, current: this.state, rotated };
+  }
+
+  setLastBackgroundTime(): void {
+    if (!this._state) return;
+    this._state.lastBackgroundAt = Date.now();
+    this.save();
   }
 
   startNewSession(): SessionState {
@@ -70,7 +87,11 @@ export class SankofaSessionManager {
       if (typeof parsed.id !== "string" || typeof parsed.lastActivityAt !== "number") {
         return null;
       }
-      return { id: parsed.id, lastActivityAt: parsed.lastActivityAt };
+      return { 
+        id: parsed.id, 
+        lastActivityAt: parsed.lastActivityAt,
+        lastBackgroundAt: parsed.lastBackgroundAt 
+      };
     } catch {
       return null;
     }
