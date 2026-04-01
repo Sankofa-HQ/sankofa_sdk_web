@@ -146,6 +146,7 @@ export function rrwebReplayPlugin(
           events,
           meta: {
             url: window.location.href,
+            current_screen: snapshot.currentScreen,
             viewport: {
               width: window.innerWidth,
               height: window.innerHeight,

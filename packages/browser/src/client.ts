@@ -284,6 +284,7 @@ export class SankofaBrowserClient {
       anonymousId: idState.anonymousId,
       identifiedId: idState.identifiedId,
       sessionId: session.id,
+      currentScreen: this._currentScreen,
       libVersion: SANKOFA_BROWSER_VERSION,
       projectNamespace: this.props.storagePrefix,
     };
@@ -309,19 +310,7 @@ export class SankofaBrowserClient {
     }
   }
 
-  private async capturePageView(source: "initial" | "history"): Promise<void> {
-    await this.track("$pageview", {
-      source,
-      title: document.title,
-      path: window.location.pathname,
-      search: window.location.search,
-      hash: window.location.hash,
-      url: window.location.href,
-      referrer: document.referrer || "",
-    });
-  }
 
-  private buildDefaultProperties(): Record<string, string> {
     if (typeof window === "undefined") return {};
 
     const ua = navigator.userAgent;

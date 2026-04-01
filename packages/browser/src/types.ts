@@ -71,6 +71,7 @@ export interface SankofaClientSnapshot {
   anonymousId: string;
   identifiedId: string | null;
   sessionId: string;
+  currentScreen: string;
   libVersion: string;
   projectNamespace: string;
 }
