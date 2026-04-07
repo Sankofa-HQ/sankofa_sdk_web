@@ -151,6 +151,24 @@ export class SankofaBrowserClient {
     await this.track("$screen_view", { ...properties, $screen_name: screenName });
   }
 
+  /**
+   * Auto-pageview hook fired by SankofaAutocapture on initial load and SPA
+   * history navigation.  When the host app has not called `screen()` manually,
+   * we use the current pathname as a best-effort screen tag so heatmap
+   * attribution still works out of the box.
+   */
+  private async capturePageView(source: "initial" | "history"): Promise<void> {
+    if (typeof window === "undefined") return;
+    if (!this._isManualScreen) {
+      this._currentScreen = window.location.pathname || "/";
+    }
+    await this.track("$pageview", {
+      $pageview_source: source,
+      $pathname: window.location.pathname,
+      $current_url: window.location.href,
+    });
+  }
+
   async track(eventName: string, properties: SankofaPropertyMap = {}): Promise<void> {
     const isFirstEvents = ["$app_open_first_time", "$session_start"].includes(eventName);
     if (!this._isInitialized && !isFirstEvents) {
@@ -310,12 +328,11 @@ export class SankofaBrowserClient {
     }
   }
 
-
+  private buildDefaultProperties(): Record<string, string> {
     if (typeof window === "undefined") return {};
 
     const ua = navigator.userAgent;
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-    
+
     let os = "Other";
     if (/Windows/i.test(ua)) os = "Windows";
     else if (/Mac/i.test(ua)) os = "MacOS";

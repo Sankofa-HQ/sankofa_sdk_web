@@ -15,6 +15,34 @@ type QueuedReplayChunk = {
   payload: Uint8Array;
 };
 
+// ─── Heatmap interaction encoding ─────────────────────────────────────────────
+// The Sankofa backend (server/engine/ee/replay/worker.go) reads payload.events[]
+// from each replay chunk and inserts any event whose data.source ∈ {1,2,3,5,6}
+// into the `replay_interactions` ClickHouse table.  It then normalizes (x,y) by
+// dividing by device_context.{screen_width,screen_height} to produce 0.0–1.0
+// coordinates that the dashboard renders as heatmap dots.
+//
+// The iOS SDK uses source=2 (mobile tap) and the same wire shape, so we mirror
+// it exactly here for full backend parity — no server changes required.
+const RRWEB_INCREMENTAL_SNAPSHOT = 3;
+const HEATMAP_SOURCE_TAP = 2;
+const TAP_TYPE_DOWN = 1;
+const TAP_TYPE_UP = 0;
+const TAP_TYPE_MOVE = 6;
+
+interface HeatmapInteractionEvent {
+  type: typeof RRWEB_INCREMENTAL_SNAPSHOT;
+  data: {
+    source: typeof HEATMAP_SOURCE_TAP;
+    type: number;
+    id: number;
+    x: number;
+    y: number;
+  };
+  timestamp: number;
+  screen?: string;
+}
+
 export interface RrwebReplayPluginOptions {
   enabled?: boolean;
   flushIntervalMs?: number;
@@ -23,18 +51,32 @@ export interface RrwebReplayPluginOptions {
   blockSelector?: string;
   maskSelector?: string;
   ignoreSelector?: string;
+  /**
+   * When `true` (default), the plugin captures click/pointer events and injects
+   * them as rrweb CustomEvents into the chunk so the dashboard can render web
+   * heatmaps.  Disable only if you are forwarding heatmap data through some
+   * other mechanism.
+   */
+  captureHeatmap?: boolean;
+  /**
+   * Throttle for `pointermove` capture (ms).  Defaults to 50ms (~20 samples/sec).
+   * Down/up are never throttled.
+   */
+  pointerMoveThrottleMs?: number;
 }
 
 const DEFAULT_OPTIONS: Required<
   Pick<
     RrwebReplayPluginOptions,
-    "enabled" | "flushIntervalMs" | "maxEventsPerChunk" | "maskAllInputs"
+    "enabled" | "flushIntervalMs" | "maxEventsPerChunk" | "maskAllInputs" | "captureHeatmap" | "pointerMoveThrottleMs"
   >
 > = {
   enabled: true,
   flushIntervalMs: 5_000,
   maxEventsPerChunk: 250,
   maskAllInputs: true,
+  captureHeatmap: true,
+  pointerMoveThrottleMs: 50,
 };
 
 export function rrwebReplayPlugin(
@@ -69,6 +111,87 @@ export function rrwebReplayPlugin(
       let stopRecording: (() => void) | undefined;
       let flushTimer: number | null = null;
 
+      // ─── Heatmap interaction listeners ───────────────────────────────────
+      let lastPointerMoveAt = 0;
+      const pointerListeners: Array<{ type: string; fn: (e: Event) => void }> = [];
+
+      const pushHeatmapEvent = (clientX: number, clientY: number, type: number) => {
+        if (
+          !Number.isFinite(clientX) ||
+          !Number.isFinite(clientY) ||
+          clientX < 0 ||
+          clientY < 0
+        ) {
+          return;
+        }
+        const fresh = context.getSnapshot();
+        const evt: HeatmapInteractionEvent = {
+          type: RRWEB_INCREMENTAL_SNAPSHOT,
+          data: {
+            source: HEATMAP_SOURCE_TAP,
+            type,
+            id: 1,
+            x: clientX,
+            y: clientY,
+          },
+          timestamp: Date.now(),
+          // Tag with the current screen so the worker can attribute the
+          // interaction even if the chunk spans a screen change.
+          screen: fresh.currentScreen,
+        };
+        // Bootstrap chunk metadata if this is the first event in the buffer.
+        if (buffer.length === 0) {
+          snapshot = fresh;
+          bufferSessionId = fresh.sessionId;
+          bufferDistinctId = fresh.distinctId;
+          chunkStartedAt = evt.timestamp;
+        }
+        buffer.push(evt as unknown as eventWithTime);
+        if (buffer.length >= config.maxEventsPerChunk) {
+          void flushBufferedChunk({ reason: "buffer" });
+        }
+      };
+
+      const installPointerListeners = () => {
+        if (!config.captureHeatmap || pointerListeners.length > 0) return;
+        if (typeof window === "undefined" || typeof document === "undefined") return;
+
+        const onPointerDown = (e: Event) => {
+          const pe = e as PointerEvent;
+          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_DOWN);
+        };
+        const onPointerUp = (e: Event) => {
+          const pe = e as PointerEvent;
+          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_UP);
+        };
+        const onPointerMove = (e: Event) => {
+          const now = Date.now();
+          if (now - lastPointerMoveAt < config.pointerMoveThrottleMs) return;
+          lastPointerMoveAt = now;
+          const pe = e as PointerEvent;
+          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_MOVE);
+        };
+
+        document.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
+        document.addEventListener("pointerup", onPointerUp, { passive: true, capture: true });
+        document.addEventListener("pointermove", onPointerMove, { passive: true, capture: true });
+
+        pointerListeners.push(
+          { type: "pointerdown", fn: onPointerDown },
+          { type: "pointerup", fn: onPointerUp },
+          { type: "pointermove", fn: onPointerMove },
+        );
+      };
+
+      const uninstallPointerListeners = () => {
+        if (pointerListeners.length === 0) return;
+        if (typeof document === "undefined") return;
+        for (const { type, fn } of pointerListeners) {
+          document.removeEventListener(type, fn, { capture: true } as any);
+        }
+        pointerListeners.length = 0;
+      };
+
       const stopAndCleanup = () => {
         if (flushTimer !== null) {
           window.clearInterval(flushTimer);
@@ -76,6 +199,7 @@ export function rrwebReplayPlugin(
         }
         stopRecording?.();
         stopRecording = undefined;
+        uninstallPointerListeners();
       };
 
       const startRecording = () => {
@@ -110,6 +234,8 @@ export function rrwebReplayPlugin(
             });
           }, config.flushIntervalMs);
         }
+
+        installPointerListeners();
       };
 
       const queue = createPersistentQueue<QueuedReplayChunk>({
@@ -135,21 +261,43 @@ export function rrwebReplayPlugin(
         chunkStartedAt = null;
         chunkIndex += 1;
 
+        // The Sankofa replay worker (server/engine/ee/replay/worker.go) reads
+        // device_context.{screen_width,screen_height} to normalize interaction
+        // coordinates to 0–1 before inserting into ClickHouse.  Without this
+        // field, screenW/screenH fall back to iPhone defaults (393×852) and
+        // every web heatmap dot lands in the wrong spot.
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
         const body = {
           mode: "rrweb" as const,
+          // Both the legacy (`session_id`/`distinct_id`/`chunk_index`) and the
+          // newer (`_session_id`/`_distinct_id`/`_chunk_index`) field shapes
+          // are populated so the worker can read either.
           session_id: sessionId,
           distinct_id: distinctId,
           chunk_index: currentChunkIndex,
+          _session_id: sessionId,
+          _distinct_id: distinctId,
+          _chunk_index: currentChunkIndex,
+          _replay_mode: "rrweb",
           started_at: new Date(startedAt).toISOString(),
           ended_at: new Date(endedAt).toISOString(),
           event_count: events.length,
           events,
+          $app_version: SANKOFA_BROWSER_VERSION,
+          device_context: {
+            screen_width: viewportWidth,
+            screen_height: viewportHeight,
+            $os: "web",
+            $app_version: SANKOFA_BROWSER_VERSION,
+          },
           meta: {
             url: window.location.href,
             current_screen: snapshot.currentScreen,
             viewport: {
-              width: window.innerWidth,
-              height: window.innerHeight,
+              width: viewportWidth,
+              height: viewportHeight,
             },
             sdk_version: SANKOFA_BROWSER_VERSION,
           },
