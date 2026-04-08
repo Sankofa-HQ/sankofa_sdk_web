@@ -29,6 +29,17 @@ const HEATMAP_SOURCE_TAP = 2;
 const TAP_TYPE_DOWN = 1;
 const TAP_TYPE_UP = 0;
 const TAP_TYPE_MOVE = 6;
+// Synthetic marker emitted by the SDK when a click is the second of a
+// double-click sequence.  Matches rrweb's official `dblclick` enum value (4)
+// so the rrweb player can replay it natively.  The dashboard reads
+// interaction_type = 4 to render a "2×" overlay icon at the click site.
+const TAP_TYPE_DOUBLE = 4;
+// Double-click recognition window — matches macOS / Windows defaults
+// closely.  Anything slower than this is treated as two separate clicks.
+const DOUBLE_CLICK_INTERVAL_MS = 350;
+// Spatial tolerance — a click that lands within this many pixels of the
+// previous click and inside the time window counts as a double-click.
+const DOUBLE_CLICK_RADIUS_PX = 25;
 
 interface HeatmapInteractionEvent {
   type: typeof RRWEB_INCREMENTAL_SNAPSHOT;
@@ -154,9 +165,27 @@ export function rrwebReplayPlugin(
 
       // ─── Heatmap interaction listeners ───────────────────────────────────
       let lastPointerMoveAt = 0;
+      // Spatial coalesce — same algorithm as the iOS interceptor.  Drops
+      // pointer_move samples whose (x, y) is within MOVE_COALESCE_PX of the
+      // previous recorded sample.  Eliminates jitter samples while a mouse
+      // is held still and stops a single drag from producing 200+ rows.
+      const MOVE_COALESCE_PX = 4;
+      let lastMoveX = -9999;
+      let lastMoveY = -9999;
+      // Double-click recognizer — tracks the last pointer_down so that the
+      // next pointer_down within DOUBLE_CLICK_INTERVAL_MS / DOUBLE_CLICK_RADIUS_PX
+      // can be tagged with a synthetic TAP_TYPE_DOUBLE marker event.
+      let lastClickAt = 0;
+      let lastClickX = -9999;
+      let lastClickY = -9999;
       const pointerListeners: Array<{ type: string; fn: (e: Event) => void }> = [];
 
-      const pushHeatmapEvent = (clientX: number, clientY: number, type: number) => {
+      const pushHeatmapEvent = (
+        clientX: number,
+        clientY: number,
+        type: number,
+        target: Element | null = null,
+      ) => {
         if (
           !Number.isFinite(clientX) ||
           !Number.isFinite(clientY) ||
@@ -165,7 +194,29 @@ export function rrwebReplayPlugin(
         ) {
           return;
         }
+        // A new touch sequence resets the move tracker so the first move
+        // sample after a down is always recorded.
+        if (type === TAP_TYPE_DOWN) {
+          lastMoveX = -9999;
+          lastMoveY = -9999;
+        }
+        // Spatial coalesce for moves only.
+        if (type === TAP_TYPE_MOVE) {
+          const dx = clientX - lastMoveX;
+          const dy = clientY - lastMoveY;
+          if (dx * dx + dy * dy < MOVE_COALESCE_PX * MOVE_COALESCE_PX) {
+            return;
+          }
+          lastMoveX = clientX;
+          lastMoveY = clientY;
+        }
         const fresh = context.getSnapshot();
+        // Compute the stable selector once at click time, while the live
+        // DOM is available.  Move events skip selector capture (they're
+        // not used for element attribution and the selector cost would
+        // dominate the budget at 20 samples/sec).
+        const selector =
+          type === TAP_TYPE_MOVE ? undefined : stableSelectorFor(target);
         const evt: HeatmapInteractionEvent = {
           type: RRWEB_INCREMENTAL_SNAPSHOT,
           data: {
@@ -174,6 +225,7 @@ export function rrwebReplayPlugin(
             id: 1,
             x: clientX,
             y: clientY,
+            ...(selector ? { selector } : {}),
           },
           timestamp: Date.now(),
           // Tag with the current screen so the worker can attribute the
@@ -188,6 +240,53 @@ export function rrwebReplayPlugin(
           chunkStartedAt = evt.timestamp;
         }
         buffer.push(evt as unknown as eventWithTime);
+
+        // ── Double-click recognition ─────────────────────────────────────
+        // Runs ONLY on pointer_down events (so the up/move events don't
+        // accidentally trigger a second match).  When the current click
+        // lands inside the recognition window, we push an additional
+        // synthetic event with type = TAP_TYPE_DOUBLE so the dashboard's
+        // double-click filter can render a "2×" marker at this site.
+        // The original pointer_down stays in the buffer so the click
+        // heatmap intensity is unaffected.
+        if (type === TAP_TYPE_DOWN) {
+          const now = evt.timestamp;
+          const dt = now - lastClickAt;
+          const dxc = clientX - lastClickX;
+          const dyc = clientY - lastClickY;
+          const isDouble =
+            lastClickAt > 0 &&
+            dt < DOUBLE_CLICK_INTERVAL_MS &&
+            dxc * dxc + dyc * dyc <
+              DOUBLE_CLICK_RADIUS_PX * DOUBLE_CLICK_RADIUS_PX;
+
+          if (isDouble) {
+            const dblEvt: HeatmapInteractionEvent = {
+              type: RRWEB_INCREMENTAL_SNAPSHOT,
+              data: {
+                source: HEATMAP_SOURCE_TAP,
+                type: TAP_TYPE_DOUBLE,
+                id: 1,
+                x: clientX,
+                y: clientY,
+                ...(selector ? { selector } : {}),
+              },
+              timestamp: now,
+              screen: fresh.currentScreen,
+            };
+            buffer.push(dblEvt as unknown as eventWithTime);
+            // Reset so a third click in the same cluster doesn't fire
+            // another double-click marker.
+            lastClickAt = 0;
+            lastClickX = -9999;
+            lastClickY = -9999;
+          } else {
+            lastClickAt = now;
+            lastClickX = clientX;
+            lastClickY = clientY;
+          }
+        }
+
         if (buffer.length >= config.maxEventsPerChunk) {
           void flushBufferedChunk({ reason: "buffer" });
         }
@@ -199,11 +298,21 @@ export function rrwebReplayPlugin(
 
         const onPointerDown = (e: Event) => {
           const pe = e as PointerEvent;
-          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_DOWN);
+          pushHeatmapEvent(
+            pe.clientX,
+            pe.clientY,
+            TAP_TYPE_DOWN,
+            pe.target as Element | null,
+          );
         };
         const onPointerUp = (e: Event) => {
           const pe = e as PointerEvent;
-          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_UP);
+          pushHeatmapEvent(
+            pe.clientX,
+            pe.clientY,
+            TAP_TYPE_UP,
+            pe.target as Element | null,
+          );
         };
         const onPointerMove = (e: Event) => {
           const now = Date.now();
@@ -245,9 +354,27 @@ export function rrwebReplayPlugin(
 
       const startRecording = () => {
         if (stopRecording) return;
-        
+
         stopRecording = record({
-          emit(event) {
+          emit(event, isCheckout) {
+            // 🚨 CHECKOUT BOUNDARY HANDLING
+            //
+            // When rrweb takes a fresh FullSnapshot (because checkoutEveryNms
+            // elapsed or maxEventsPerChunk would otherwise straddle the boundary),
+            // we MUST flush whatever's in the current buffer BEFORE the new
+            // FullSnapshot lands in it.  Otherwise the new FullSnapshot ends up
+            // in the middle of a chunk and the player sees a chunk that starts
+            // with mutations referencing nodes the previous FullSnapshot defined
+            // — but those nodes have all been re-minted with NEW IDs by the
+            // checkout, so every mutation fails with "Node with id 'N' not found".
+            //
+            // After the flush, the new chunk starts with the freshly emitted
+            // Meta + FullSnapshot pair, and every subsequent chunk produced by
+            // the same checkout window is self-contained.
+            if (isCheckout && buffer.length > 0) {
+              void flushBufferedChunk({ reason: "buffer" });
+            }
+
             if (buffer.length === 0) {
               snapshot = context.getSnapshot();
               bufferSessionId = snapshot.sessionId;
@@ -266,6 +393,20 @@ export function rrwebReplayPlugin(
           blockSelector: options.blockSelector,
           maskTextSelector: options.maskSelector,
           ignoreSelector: options.ignoreSelector,
+          // 🚨 CRITICAL: take a fresh FullSnapshot every 30 seconds.  Without
+          // this, rrweb only emits a FullSnapshot ONCE at the start of
+          // recording.  Long sessions and React-heavy first-paints fill the
+          // 250-event buffer in <1 second, so chunks 1+ contain only mutations
+          // that reference nodes minted in chunk 0's FullSnapshot — and as
+          // soon as a node is created within chunk 1 and modified later in
+          // chunk 1, the player can't render it because the create-mutation
+          // is in a *different* chunk.
+          //
+          // Setting checkoutEveryNms makes rrweb periodically reset its mirror
+          // and emit a fresh Meta + FullSnapshot, ensuring every chunk that
+          // crosses a checkout boundary contains its own self-contained DOM
+          // baseline.  30s is the standard rrweb default for this pattern.
+          checkoutEveryNms: 30_000,
         });
 
         if (flushTimer === null) {
