@@ -296,11 +296,18 @@ export function rrwebReplayPlugin(
         if (!config.captureHeatmap || pointerListeners.length > 0) return;
         if (typeof window === "undefined" || typeof document === "undefined") return;
 
+        // 📐 We send pageX / pageY (document-relative) instead of
+        // clientX / clientY (viewport-relative) so the dashboard can
+        // render the FULL page heatmap — clicks at the bottom of a long
+        // scrolled page now plot at their true document position rather
+        // than collapsing onto the captured viewport.  The replay worker
+        // normalizes against device_context.document_height (set in the
+        // chunk envelope below) for the same reason.
         const onPointerDown = (e: Event) => {
           const pe = e as PointerEvent;
           pushHeatmapEvent(
-            pe.clientX,
-            pe.clientY,
+            pe.pageX,
+            pe.pageY,
             TAP_TYPE_DOWN,
             pe.target as Element | null,
           );
@@ -308,8 +315,8 @@ export function rrwebReplayPlugin(
         const onPointerUp = (e: Event) => {
           const pe = e as PointerEvent;
           pushHeatmapEvent(
-            pe.clientX,
-            pe.clientY,
+            pe.pageX,
+            pe.pageY,
             TAP_TYPE_UP,
             pe.target as Element | null,
           );
@@ -319,7 +326,7 @@ export function rrwebReplayPlugin(
           if (now - lastPointerMoveAt < config.pointerMoveThrottleMs) return;
           lastPointerMoveAt = now;
           const pe = e as PointerEvent;
-          pushHeatmapEvent(pe.clientX, pe.clientY, TAP_TYPE_MOVE);
+          pushHeatmapEvent(pe.pageX, pe.pageY, TAP_TYPE_MOVE);
         };
 
         document.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
@@ -448,8 +455,31 @@ export function rrwebReplayPlugin(
         // coordinates to 0–1 before inserting into ClickHouse.  Without this
         // field, screenW/screenH fall back to iPhone defaults (393×852) and
         // every web heatmap dot lands in the wrong spot.
+        //
+        // For full-page web heatmaps we ALSO send document_width /
+        // document_height — the natural size of the entire scrollable page
+        // at chunk-flush time.  Combined with pageX/pageY in the click
+        // events (see installPointerListeners above), this lets the worker
+        // store document-relative normalized coordinates so the dashboard
+        // can render the full long page with heat anchored to the right
+        // spots — not just the captured viewport region.
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
+        const docEl = document.documentElement;
+        const documentWidth = Math.max(
+          docEl?.scrollWidth ?? 0,
+          docEl?.offsetWidth ?? 0,
+          document.body?.scrollWidth ?? 0,
+          document.body?.offsetWidth ?? 0,
+          viewportWidth,
+        );
+        const documentHeight = Math.max(
+          docEl?.scrollHeight ?? 0,
+          docEl?.offsetHeight ?? 0,
+          document.body?.scrollHeight ?? 0,
+          document.body?.offsetHeight ?? 0,
+          viewportHeight,
+        );
 
         const body = {
           mode: "rrweb" as const,
@@ -471,6 +501,10 @@ export function rrwebReplayPlugin(
           device_context: {
             screen_width: viewportWidth,
             screen_height: viewportHeight,
+            // Full-page dimensions — used by the worker to normalize
+            // page-relative pointer events to [0, 1] document coordinates.
+            document_width: documentWidth,
+            document_height: documentHeight,
             $os: "web",
             $app_version: SANKOFA_BROWSER_VERSION,
           },
@@ -480,6 +514,10 @@ export function rrwebReplayPlugin(
             viewport: {
               width: viewportWidth,
               height: viewportHeight,
+            },
+            document: {
+              width: documentWidth,
+              height: documentHeight,
             },
             sdk_version: SANKOFA_BROWSER_VERSION,
           },
