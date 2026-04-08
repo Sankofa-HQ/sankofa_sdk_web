@@ -38,9 +38,50 @@ interface HeatmapInteractionEvent {
     id: number;
     x: number;
     y: number;
+    /**
+     * Stable CSS selector of the click target.  Used by the dashboard's
+     * "Top Clicked Elements" panel for accurate element attribution.
+     * Mirrors the same algorithm in dashboard/ee/components/heatmaps/web/stableSelector.ts.
+     */
+    selector?: string;
   };
   timestamp: number;
   screen?: string;
+}
+
+/**
+ * Computes a short, stable CSS selector for an element.  Mirrors the
+ * dashboard implementation at dashboard/ee/components/heatmaps/web/stableSelector.ts —
+ * keep both copies in sync if you change the priority order.
+ *
+ * Priority:
+ *   1. data-testid attribute  (most stable)
+ *   2. id attribute
+ *   3. role + tag
+ *   4. tag.class
+ *   5. tag (last resort)
+ */
+function stableSelectorFor(el: Element | null): string {
+  if (!el) return "";
+  const tid = el.getAttribute("data-testid");
+  if (tid) return `[data-testid="${tid}"]`;
+  if (el.id) return `#${el.id}`;
+  const role = el.getAttribute("role");
+  if (role) return `${el.tagName.toLowerCase()}[role="${role}"]`;
+  const className =
+    typeof el.className === "string"
+      ? el.className
+      : ((el as unknown as { className?: { baseVal?: string } }).className
+          ?.baseVal ?? "");
+  const classes = className
+    .split(" ")
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(".");
+  return classes
+    ? `${el.tagName.toLowerCase()}.${classes}`
+    : el.tagName.toLowerCase();
 }
 
 export interface RrwebReplayPluginOptions {
