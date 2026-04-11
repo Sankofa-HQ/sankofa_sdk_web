@@ -163,6 +163,54 @@ export function rrwebReplayPlugin(
       let stopRecording: (() => void) | undefined;
       let flushTimer: number | null = null;
 
+      // ─── Scroll-reach tracking ───────────────────────────────────────────
+      // The heatmap viewer's scroll-reach gradient bar needs to know "how
+      // far down the page did each user actually scroll".  We track two
+      // running maxes PER SCREEN:
+      //
+      //   maxScrollY  — furthest scrollTop the window ever reached
+      //   maxBottomY  — furthest bottom-of-viewport Y (maxScrollY + viewport height)
+      //
+      // Every user who loaded the page automatically "reached" Y in
+      // [0, viewportHeight] because that's the first fold — we initialize
+      // maxBottomY to `window.innerHeight` on screen-change so the hero
+      // always counts as 100% reach even for users who never scrolled.
+      //
+      // Both values RESET when the host calls `setCurrentScreen()` so
+      // each screen gets its own reach curve, not a cumulative one
+      // across multi-page sessions.  We detect the screen change
+      // lazily by comparing context.getSnapshot().currentScreen to
+      // the last value we observed — the client SDK doesn't expose a
+      // subscription API for screen changes yet.
+      let maxScrollY = 0;
+      let maxBottomY = 0;
+      let lastTrackedScreen: string | null = null;
+      const maybeResetForScreenChange = () => {
+        try {
+          const screen = context.getSnapshot().currentScreen;
+          if (lastTrackedScreen === null) {
+            lastTrackedScreen = screen;
+            return;
+          }
+          if (screen !== lastTrackedScreen) {
+            lastTrackedScreen = screen;
+            maxScrollY = 0;
+            maxBottomY = 0;
+          }
+        } catch {
+          /* getSnapshot may throw during teardown — ignore */
+        }
+      };
+      const measureScrollReach = () => {
+        if (typeof window === "undefined") return;
+        maybeResetForScreenChange();
+        const y = window.pageYOffset ?? window.scrollY ?? 0;
+        const vh = window.innerHeight || 0;
+        if (y > maxScrollY) maxScrollY = y;
+        const bottom = y + vh;
+        if (bottom > maxBottomY) maxBottomY = bottom;
+      };
+
       // ─── Heatmap interaction listeners ───────────────────────────────────
       let lastPointerMoveAt = 0;
       // Spatial coalesce — same algorithm as the iOS interceptor.  Drops
@@ -333,10 +381,20 @@ export function rrwebReplayPlugin(
         document.addEventListener("pointerup", onPointerUp, { passive: true, capture: true });
         document.addEventListener("pointermove", onPointerMove, { passive: true, capture: true });
 
+        // Scroll listener for scroll-reach tracking.  Runs on the window
+        // (not document) so it captures top-level page scroll.  Passive so
+        // we never block the scroll animation.
+        const onScroll = () => measureScrollReach();
+        window.addEventListener("scroll", onScroll, { passive: true });
+        // Seed with the current position so "never scrolled" still counts
+        // the first fold as reached.
+        measureScrollReach();
+
         pointerListeners.push(
           { type: "pointerdown", fn: onPointerDown },
           { type: "pointerup", fn: onPointerUp },
           { type: "pointermove", fn: onPointerMove },
+          { type: "scroll", fn: onScroll },
         );
       };
 
@@ -344,7 +402,13 @@ export function rrwebReplayPlugin(
         if (pointerListeners.length === 0) return;
         if (typeof document === "undefined") return;
         for (const { type, fn } of pointerListeners) {
-          document.removeEventListener(type, fn, { capture: true } as any);
+          // The scroll listener is installed on `window`, not `document`.
+          // Detach from the right event target so we don't leak.
+          if (type === "scroll") {
+            window.removeEventListener(type, fn);
+          } else {
+            document.removeEventListener(type, fn, { capture: true } as any);
+          }
         }
         pointerListeners.length = 0;
       };
@@ -518,6 +582,23 @@ export function rrwebReplayPlugin(
             document: {
               width: documentWidth,
               height: documentHeight,
+            },
+            // Scroll-reach summary for this chunk.  Powers the heatmap
+            // viewer's scroll-reach gradient bar.  Server worker reads
+            // this and INSERTs a row into scroll_reach_sessions keyed by
+            // (project, env, session_id, screen_name), and the dashboard
+            // aggregates across sessions at query time.
+            //
+            // max_scroll_y  — furthest scrollTop the window ever hit
+            // max_bottom_y  — max(scrollY + innerHeight) — the FURTHEST
+            //                 Y that was ever visible in the user's
+            //                 viewport (so the first fold counts even
+            //                 when scrollY is always 0)
+            scroll_reach: {
+              max_scroll_y: maxScrollY,
+              max_bottom_y: maxBottomY,
+              viewport_height: viewportHeight,
+              document_height: documentHeight,
             },
             sdk_version: SANKOFA_BROWSER_VERSION,
           },
