@@ -71,6 +71,12 @@ export function resolveReplayConfigUrl(endpoint: string): URL {
   return url;
 }
 
+export function resolveHandshakeUrl(endpoint: string): URL {
+  const url = resolveServerBaseUrl(endpoint);
+  url.pathname = toPathname([...trimPathSegments(url.pathname), "api", "v1", "handshake"]);
+  return url;
+}
+
 export function serializeTransportProperties(
   properties: SankofaPropertyMap,
 ): Record<string, string> {

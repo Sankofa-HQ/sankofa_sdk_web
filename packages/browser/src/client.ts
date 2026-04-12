@@ -18,6 +18,7 @@ import {
   SANKOFA_BROWSER_VERSION,
   hashString,
   resolveBatchUrl,
+  resolveHandshakeUrl,
   resolveReplayChunkUrl,
   resolveReplayConfigUrl,
   serializeTransportProperties,
@@ -27,6 +28,7 @@ export class SankofaBrowserClient {
   private props: {
     apiKey: string | null;
     batchUrl: URL | null;
+    handshakeUrl: URL | null;
     replayChunkUrl: URL | null;
     replayConfigUrl: URL | null;
     storagePrefix: string;
@@ -34,6 +36,7 @@ export class SankofaBrowserClient {
   } = {
     apiKey: null,
     batchUrl: null,
+    handshakeUrl: null,
     replayChunkUrl: null,
     replayConfigUrl: null,
     storagePrefix: "sankofa:browser",
@@ -64,6 +67,7 @@ export class SankofaBrowserClient {
 
     this.props.apiKey = options.apiKey.trim();
     this.props.batchUrl = resolveBatchUrl(options.endpoint);
+    this.props.handshakeUrl = resolveHandshakeUrl(options.endpoint);
     this.props.replayChunkUrl = resolveReplayChunkUrl(options.endpoint);
     this.props.replayConfigUrl = resolveReplayConfigUrl(options.endpoint);
     this.props.debug = Boolean(options.debug);
@@ -101,9 +105,19 @@ export class SankofaBrowserClient {
       this.autocapture.install();
     }
 
-    // Remote Configuration Sync
+    // ── Unified Handshake ──
+    // One call to /api/v1/handshake returns config for ALL Sankofa
+    // products. We extract the replay config from the response.
+    // Falls back to the legacy /api/replay/config endpoint if the
+    // handshake is unavailable (older server versions).
     try {
-      this.replayConfig = await this.fetchReplayConfig();
+      const handshake = await this.fetchHandshake();
+      if (handshake?.replay) {
+        this.replayConfig = handshake.replay as SankofaReplayConfig;
+      } else {
+        // Fallback to legacy endpoint
+        this.replayConfig = await this.fetchReplayConfig();
+      }
     } catch (error) {
       this.debug("Failed to fetch remote config, using defaults", error);
     }
@@ -368,6 +382,23 @@ export class SankofaBrowserClient {
       $current_url: window.location.href,
       $timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     };
+  }
+
+  private async fetchHandshake(): Promise<Record<string, any> | null> {
+    const url = this.props.handshakeUrl;
+    if (!url || !this.props.apiKey) return null;
+
+    const res = await fetch(url.toString(), {
+      headers: { "x-api-key": this.props.apiKey },
+    }).catch(() => null);
+
+    if (res?.ok) {
+      const data = await res.json();
+      this.debug("🤝 Handshake OK", data.project_id);
+      return data.modules ?? null;
+    }
+    this.debug("🤝 Handshake unavailable, falling back to legacy config");
+    return null;
   }
 
   private async fetchReplayConfig(): Promise<SankofaReplayConfig | null> {
