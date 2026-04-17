@@ -9,6 +9,7 @@ export type {
   SankofaClientSnapshot,
   SankofaFlushOptions,
   SankofaInitOptions,
+  SankofaModuleName,
   SankofaPeoplePayload,
   SankofaPlugin,
   SankofaPluginContext,

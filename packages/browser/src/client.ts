@@ -105,17 +105,26 @@ export class SankofaBrowserClient {
       this.autocapture.install();
     }
 
+    // ── Pre-register plugin module names (before handshake) ──
+    // The Traffic Cop needs to know which canonical modules have a
+    // plugin BEFORE the handshake fetch — otherwise `routeHandshake`
+    // sees an empty registry and warns "no plugin" for every module.
+    // We pre-register the module names (the lightweight `moduleName`
+    // declaration on each plugin) here; full plugin setup still runs
+    // AFTER the handshake so replay plugins can read `replayConfig`
+    // from their setup context.
+    this.plugins.preregisterModules(options.plugins ?? []);
+
     // ── Unified Handshake ──
     // One call to /api/v1/handshake returns config for ALL Sankofa
-    // products. We extract the replay config from the response.
-    // Falls back to the legacy /api/replay/config endpoint if the
-    // handshake is unavailable (older server versions).
+    // products. Falls back to legacy /api/replay/config on older servers.
+    // Traffic Cop module routing happens after full plugin setup below.
+    let handshakeModules: Record<string, any> | null = null;
     try {
-      const handshake = await this.fetchHandshake();
-      if (handshake?.replay) {
-        this.replayConfig = handshake.replay as SankofaReplayConfig;
+      handshakeModules = await this.fetchHandshake();
+      if (handshakeModules?.replay) {
+        this.replayConfig = handshakeModules.replay as SankofaReplayConfig;
       } else {
-        // Fallback to legacy endpoint
         this.replayConfig = await this.fetchReplayConfig();
       }
     } catch (error) {
@@ -129,6 +138,11 @@ export class SankofaBrowserClient {
       replayConfig: this.replayConfig ?? undefined,
       triggerHighFidelity: () => this.plugins.notifyHighFidelity(),
     });
+
+    // Traffic Cop — now that plugins are fully registered, dispatch the
+    // handshake-driven module flags to them. Runs as a no-op for modules
+    // without a corresponding plugin (with a dev warning).
+    await this.plugins.routeHandshake(handshakeModules);
 
     this.intervalId = window.setInterval(() => {
       void this.flush({ reason: "timer" });
@@ -388,13 +402,26 @@ export class SankofaBrowserClient {
     const url = this.props.handshakeUrl;
     if (!url || !this.props.apiKey) return null;
 
-    const res = await fetch(url.toString(), {
+    // Reverse Handshake: tell the server which canonical modules this
+    // bundle ships with so the dashboard can gate UI for missing modules.
+    // `sdk=web` identifies this as a browser/Node bundle for grouping.
+    // Legacy SDKs (no `installed` param) default to "allow everything"
+    // server-side — backward compatible.
+    const installed = this.plugins.getInstalledModules().join(",");
+    const urlWithInstalled = new URL(url.toString());
+    urlWithInstalled.searchParams.set("installed", installed);
+    urlWithInstalled.searchParams.set("sdk", "web");
+
+    const res = await fetch(urlWithInstalled.toString(), {
       headers: { "x-api-key": this.props.apiKey },
     }).catch(() => null);
 
     if (res?.ok) {
       const data = await res.json();
-      this.debug("🤝 Handshake OK", data.project_id);
+      this.debug("🤝 Handshake OK", data.project_id, "(installed:", installed, ")");
+      // Traffic Cop routing is done by init() AFTER full plugin setup,
+      // so plugins can read both `replayConfig` from setup context AND
+      // their own `applyHandshake` config. We just return the modules.
       return data.modules ?? null;
     }
     this.debug("🤝 Handshake unavailable, falling back to legacy config");

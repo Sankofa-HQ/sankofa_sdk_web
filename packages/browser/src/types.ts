@@ -84,6 +84,13 @@ export interface SankofaPluginContext {
   triggerHighFidelity?(): void;
 }
 
+/**
+ * Canonical module names Sankofa ships. Plugins that correspond to
+ * a first-class module set their `moduleName` so the Traffic Cop can
+ * route handshake flags to them.
+ */
+export type SankofaModuleName = "analytics" | "deploy" | "catch";
+
 export interface SankofaPluginInstance {
   flush?(options?: SankofaFlushOptions): Promise<void> | void;
   shutdown?(): Promise<void> | void;
@@ -96,10 +103,23 @@ export interface SankofaPluginInstance {
     previous: SankofaClientSnapshot,
   ): Promise<void> | void;
   onHighFidelity?(): Promise<void> | void;
+  /**
+   * Traffic Cop hook — called when the handshake response says this
+   * plugin's module is enabled. Only invoked on plugins that declared
+   * a `moduleName`. Missing plugins (not in `plugins` array) get a
+   * dev-mode warning and a silent no-op in production.
+   */
+  applyHandshake?(config: Record<string, unknown>): Promise<void> | void;
 }
 
 export interface SankofaPlugin {
   name: string;
+  /**
+   * If set, identifies this plugin as the handler for a canonical
+   * Sankofa module (deploy, catch, ...). The Core will route the
+   * corresponding handshake flag to this plugin via `applyHandshake`.
+   */
+  moduleName?: SankofaModuleName;
   setup(
     context: SankofaPluginContext,
   ): Promise<SankofaPluginInstance | void> | SankofaPluginInstance | void;
