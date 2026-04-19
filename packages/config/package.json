@@ -1,0 +1,35 @@
+{
+  "name": "@sankofa/config",
+  "version": "0.1.2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
+  },
+  "keywords": [
+    "sankofa",
+    "config",
+    "remote-config",
+    "feature-flags",
+    "self-hosted"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "@sankofa/browser": "0.1.2"
+  }
+}

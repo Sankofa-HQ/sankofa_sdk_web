@@ -412,20 +412,80 @@ export class SankofaBrowserClient {
     urlWithInstalled.searchParams.set("installed", installed);
     urlWithInstalled.searchParams.set("sdk", "web");
 
-    const res = await fetch(urlWithInstalled.toString(), {
-      headers: { "x-api-key": this.props.apiKey },
-    }).catch(() => null);
+    // Stale-while-revalidate: the server emits a composite ETag over
+    // every module that publishes one. We persist that etag + the last
+    // modules payload so the next boot can restore instantly AND the
+    // next refresh can send If-None-Match for a 304 when nothing has
+    // changed. Private browsing / storage-full situations degrade
+    // gracefully: we just don't hit the 304 path on those clients.
+    const headers: Record<string, string> = { "x-api-key": this.props.apiKey };
+    const cached = this.loadCachedHandshake();
+    if (cached?.etag) headers["If-None-Match"] = cached.etag;
 
-    if (res?.ok) {
+    const res = await fetch(urlWithInstalled.toString(), { headers }).catch(() => null);
+    if (!res) {
+      this.debug("🤝 Handshake unavailable, serving cached modules");
+      return cached?.modules ?? null;
+    }
+
+    if (res.status === 304 && cached?.modules) {
+      this.debug("🤝 Handshake 304 Not Modified — cached modules still current");
+      return cached.modules;
+    }
+
+    if (res.ok) {
       const data = await res.json();
+      const etag = res.headers.get("ETag") || "";
       this.debug("🤝 Handshake OK", data.project_id, "(installed:", installed, ")");
-      // Traffic Cop routing is done by init() AFTER full plugin setup,
-      // so plugins can read both `replayConfig` from setup context AND
-      // their own `applyHandshake` config. We just return the modules.
+      if (data.modules) {
+        this.saveCachedHandshake({ modules: data.modules, etag });
+      }
       return data.modules ?? null;
     }
-    this.debug("🤝 Handshake unavailable, falling back to legacy config");
-    return null;
+
+    this.debug("🤝 Handshake returned", res.status, "— falling back to cache");
+    return cached?.modules ?? null;
+  }
+
+  // ── Handshake cache (last known modules + etag) ──────────────────
+  //
+  // Stored in localStorage under the client's per-project prefix so
+  // each project/api-key pair has its own cache. Kept deliberately
+  // simple — individual module plugins (switch, config) have their own
+  // caches with their own change-detection logic; this one exists only
+  // so the client can (a) send If-None-Match and (b) replay the last
+  // handshake when the network is down at boot.
+
+  private handshakeStorageKey(): string {
+    return `${this.props.storagePrefix}:handshake`;
+  }
+
+  private loadCachedHandshake(): { modules: Record<string, any>; etag: string } | null {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    try {
+      const raw = window.localStorage.getItem(this.handshakeStorageKey());
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { modules?: Record<string, any>; etag?: string; savedAt?: number };
+      if (!parsed?.modules) return null;
+      // Same 7-day stale guard as individual module caches so nothing
+      // outlives the project's "we still trust cached config" window.
+      if (parsed.savedAt && Date.now() - parsed.savedAt > 7 * 24 * 60 * 60 * 1000) return null;
+      return { modules: parsed.modules, etag: parsed.etag || "" };
+    } catch {
+      return null;
+    }
+  }
+
+  private saveCachedHandshake(payload: { modules: Record<string, any>; etag: string }): void {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(
+        this.handshakeStorageKey(),
+        JSON.stringify({ ...payload, savedAt: Date.now() }),
+      );
+    } catch {
+      /* storage full or private mode — continue without persistence */
+    }
   }
 
   private async fetchReplayConfig(): Promise<SankofaReplayConfig | null> {

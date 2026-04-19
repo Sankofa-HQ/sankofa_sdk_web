@@ -89,7 +89,12 @@ export interface SankofaPluginContext {
  * a first-class module set their `moduleName` so the Traffic Cop can
  * route handshake flags to them.
  */
-export type SankofaModuleName = "analytics" | "deploy" | "catch";
+export type SankofaModuleName =
+  | "analytics"
+  | "deploy"
+  | "catch"
+  | "switch"
+  | "config";
 
 export interface SankofaPluginInstance {
   flush?(options?: SankofaFlushOptions): Promise<void> | void;

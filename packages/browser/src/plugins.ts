@@ -105,6 +105,8 @@ export class SankofaPluginManager {
 
     await check("deploy", "deploy", "Install @sankofa/deploy and pass deployPlugin() to plugins[].");
     await check("catch", "catch", "Install @sankofa/catch and pass catchPlugin() to plugins[].");
+    await check("switch", "switch", "Install @sankofa/switch and pass switchPlugin() to plugins[].");
+    await check("config", "config", "Install @sankofa/config and pass configPlugin() to plugins[].");
   }
 
   async notifyDistinctIdChange(
