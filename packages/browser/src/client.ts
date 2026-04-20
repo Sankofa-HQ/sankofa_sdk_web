@@ -21,6 +21,7 @@ import {
   resolveHandshakeUrl,
   resolveReplayChunkUrl,
   resolveReplayConfigUrl,
+  resolveSwitchExposuresUrl,
   serializeTransportProperties,
 } from "./utils";
 
@@ -31,6 +32,7 @@ export class SankofaBrowserClient {
     handshakeUrl: URL | null;
     replayChunkUrl: URL | null;
     replayConfigUrl: URL | null;
+    switchExposuresUrl: URL | null;
     storagePrefix: string;
     debug: boolean;
   } = {
@@ -39,6 +41,7 @@ export class SankofaBrowserClient {
     handshakeUrl: null,
     replayChunkUrl: null,
     replayConfigUrl: null,
+    switchExposuresUrl: null,
     storagePrefix: "sankofa:browser",
     debug: false,
   };
@@ -70,6 +73,7 @@ export class SankofaBrowserClient {
     this.props.handshakeUrl = resolveHandshakeUrl(options.endpoint);
     this.props.replayChunkUrl = resolveReplayChunkUrl(options.endpoint);
     this.props.replayConfigUrl = resolveReplayConfigUrl(options.endpoint);
+    this.props.switchExposuresUrl = resolveSwitchExposuresUrl(options.endpoint);
     this.props.debug = Boolean(options.debug);
     this.flushIntervalMs = options.flushIntervalMs ?? 5_000;
     this.props.storagePrefix = `sankofa:${hashString(
@@ -326,6 +330,7 @@ export class SankofaBrowserClient {
       batchUrl: this.props.batchUrl!.toString(),
       replayChunkUrl: this.props.replayChunkUrl!.toString(),
       replayConfigUrl: this.props.replayConfigUrl!.toString(),
+      switchExposuresUrl: this.props.switchExposuresUrl!.toString(),
       distinctId: idState.distinctId,
       anonymousId: idState.anonymousId,
       identifiedId: idState.identifiedId,
@@ -423,6 +428,15 @@ export class SankofaBrowserClient {
     const snap = this.getSnapshot();
     if (snap?.distinctId) {
       urlWithInstalled.searchParams.set("distinct_id", snap.distinctId);
+    }
+    // Identity stitching: post-identify sessions carry the pre-identify
+    // anonymous id alongside the new distinct id so the server can
+    // merge flag evaluations/exposures across the login boundary into a
+    // single experiment subject. Skipped when the user has never been
+    // identified (distinctId still === anonymousId) because anon_id
+    // would be redundant.
+    if (snap?.anonymousId && snap.distinctId !== snap.anonymousId) {
+      urlWithInstalled.searchParams.set("anon_id", snap.anonymousId);
     }
     urlWithInstalled.searchParams.set("platform", "web");
     if (typeof navigator !== "undefined" && navigator.language) {

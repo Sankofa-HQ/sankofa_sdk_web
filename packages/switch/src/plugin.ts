@@ -1,5 +1,6 @@
-import type { SankofaPlugin, SankofaPluginContext } from "@sankofa/browser";
+import type { SankofaPlugin, SankofaPluginContext, SankofaClientSnapshot } from "@sankofa/browser";
 import { SwitchCache } from "./cache";
+import { ExposureTracker } from "./exposures";
 import type {
   FlagChangeListener,
   FlagDecision,
@@ -29,6 +30,20 @@ export interface SwitchPluginOptions {
    * Default: 7 days (stale-while-revalidate).
    */
   staleMaxMs?: number;
+  /**
+   * Disable the per-call exposure tracker. Default ON. Set to false
+   * only in environments where the exposure POST would be blocked
+   * (extension contexts without host permissions, embedded webviews
+   * on locked-down enterprise networks). Experiments still work on
+   * evaluation-based data as a fallback.
+   */
+  trackExposures?: boolean;
+  /**
+   * Optional host-app version string forwarded with every exposure.
+   * Defaults to the SDK's own version — host apps that want their
+   * own release versioning should pass it explicitly.
+   */
+  appVersion?: string;
 }
 
 class SwitchClient implements SankofaSwitchAPI {
@@ -36,6 +51,8 @@ class SwitchClient implements SankofaSwitchAPI {
   private defaults: Record<string, FlagDecision>;
   private debug: (msg: string, ...rest: unknown[]) => void;
   private listeners = new Map<string, Set<FlagChangeListener>>();
+  private exposures: ExposureTracker | null = null;
+  private snapshotFn: (() => SankofaClientSnapshot) | null = null;
 
   constructor(
     storageKey: string,
@@ -48,22 +65,60 @@ class SwitchClient implements SankofaSwitchAPI {
     this.debug = debug;
   }
 
+  attachExposureTracker(
+    tracker: ExposureTracker,
+    snapshotFn: () => SankofaClientSnapshot,
+  ): void {
+    this.exposures = tracker;
+    this.snapshotFn = snapshotFn;
+  }
+
+  getExposureTracker(): ExposureTracker | null {
+    return this.exposures;
+  }
+
+  onIdentityChange(): void {
+    // A new identity is a new experiment subject on the client side —
+    // reset the dedup so the identified user gets fresh exposure rows.
+    // Server-side stitching folds them back together via anon_id.
+    this.exposures?.resetSession();
+  }
+
   // ── SankofaSwitchAPI ────────────────────────────────────────────
 
   getFlag(key: string, defaultValue = false): boolean {
     const decision = this.resolve(key);
     if (!decision) return defaultValue;
+    this.recordExposure(key, decision);
     return decision.value;
   }
 
   getVariant(key: string, defaultValue = ""): string {
     const decision = this.resolve(key);
     if (!decision) return defaultValue;
+    this.recordExposure(key, decision);
     return decision.variant ?? defaultValue;
   }
 
   getDecision(key: string): FlagDecision | null {
-    return this.resolve(key);
+    const decision = this.resolve(key);
+    if (decision) this.recordExposure(key, decision);
+    return decision;
+  }
+
+  private recordExposure(key: string, decision: FlagDecision): void {
+    if (!this.exposures || !this.snapshotFn) return;
+    try {
+      const snap = this.snapshotFn();
+      this.exposures.record({
+        key,
+        decision,
+        distinctId: snap.distinctId,
+        anonymousId: snap.anonymousId,
+      });
+    } catch (err) {
+      this.debug("exposure record failed", err);
+    }
   }
 
   getAllKeys(): string[] {
@@ -159,7 +214,8 @@ export function switchPlugin(options: SwitchPluginOptions = {}): SankofaPlugin {
       // The client sets projectNamespace to the per-project storage
       // prefix — reusing it here keeps every plugin's storage slot
       // under the same tenant root.
-      const prefix = context.getSnapshot().projectNamespace;
+      const snap = context.getSnapshot();
+      const prefix = snap.projectNamespace;
       const storageKey = `${prefix}:switch`;
       const debug = (msg: string, ...rest: unknown[]) => context.debug(`[switch] ${msg}`, ...rest);
       singleton = new SwitchClient(
@@ -168,11 +224,35 @@ export function switchPlugin(options: SwitchPluginOptions = {}): SankofaPlugin {
         debug,
         options.staleMaxMs,
       );
+
+      // Exposure tracking closes the V1 caveat where flag_evaluations
+      // was server-written on every handshake regardless of whether the
+      // app actually read the flag. With exposures the experiment
+      // pipeline measures real user reach, not handshake fan-out.
+      if (options.trackExposures !== false && snap.switchExposuresUrl && snap.apiKey) {
+        const tracker = new ExposureTracker({
+          endpoint: snap.switchExposuresUrl,
+          apiKey: snap.apiKey,
+          sdkTag: `sankofa-web-${snap.libVersion}`,
+          appVersion: options.appVersion ?? snap.libVersion,
+          platform: "web",
+          debug,
+        });
+        singleton.attachExposureTracker(tracker, () => context.getSnapshot());
+      }
+
       return {
         applyHandshake(cfg) {
           singleton?.applyHandshake(cfg);
         },
-        shutdown() {
+        onDistinctIdChange() {
+          singleton?.onIdentityChange();
+        },
+        async flush() {
+          await singleton?.getExposureTracker()?.flush();
+        },
+        async shutdown() {
+          await singleton?.getExposureTracker()?.shutdown();
           singleton = null;
         },
       };

@@ -77,6 +77,18 @@ export function resolveHandshakeUrl(endpoint: string): URL {
   return url;
 }
 
+/**
+ * Exposure ingest URL: POST /api/switch/exposures. Lives on the
+ * public (non-v1) Switch ingest group alongside the halt-webhook so
+ * the bounded rate limiter applies and CORS is permissive enough for
+ * browsers on arbitrary origins.
+ */
+export function resolveSwitchExposuresUrl(endpoint: string): URL {
+  const url = resolveServerBaseUrl(endpoint);
+  url.pathname = toPathname([...trimPathSegments(url.pathname), "api", "switch", "exposures"]);
+  return url;
+}
+
 export function serializeTransportProperties(
   properties: SankofaPropertyMap,
 ): Record<string, string> {

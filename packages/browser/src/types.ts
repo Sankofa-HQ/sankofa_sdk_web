@@ -67,6 +67,13 @@ export interface SankofaClientSnapshot {
   batchUrl: string;
   replayChunkUrl: string;
   replayConfigUrl: string;
+  /**
+   * POST endpoint for Switch exposure batches. Plugins that track
+   * per-call flag reads use this to push their dedup'd batches; the
+   * server bucket is bounded-channel + drop-on-full so calling this is
+   * fire-and-forget from the plugin's perspective.
+   */
+  switchExposuresUrl: string;
   distinctId: string;
   anonymousId: string;
   identifiedId: string | null;
