@@ -26,10 +26,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "bundle": "node esbuild.config.js"
   },
   "sideEffects": false,
   "dependencies": {
     "@sankofa/browser": "0.1.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4"
   }
 }
