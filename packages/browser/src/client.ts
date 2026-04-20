@@ -18,6 +18,7 @@ import {
   SANKOFA_BROWSER_VERSION,
   hashString,
   resolveBatchUrl,
+  resolveCatchIngestUrl,
   resolveHandshakeUrl,
   resolveReplayChunkUrl,
   resolveReplayConfigUrl,
@@ -33,6 +34,7 @@ export class SankofaBrowserClient {
     replayChunkUrl: URL | null;
     replayConfigUrl: URL | null;
     switchExposuresUrl: URL | null;
+    catchIngestUrl: URL | null;
     storagePrefix: string;
     debug: boolean;
   } = {
@@ -42,6 +44,7 @@ export class SankofaBrowserClient {
     replayChunkUrl: null,
     replayConfigUrl: null,
     switchExposuresUrl: null,
+    catchIngestUrl: null,
     storagePrefix: "sankofa:browser",
     debug: false,
   };
@@ -74,6 +77,7 @@ export class SankofaBrowserClient {
     this.props.replayChunkUrl = resolveReplayChunkUrl(options.endpoint);
     this.props.replayConfigUrl = resolveReplayConfigUrl(options.endpoint);
     this.props.switchExposuresUrl = resolveSwitchExposuresUrl(options.endpoint);
+    this.props.catchIngestUrl = resolveCatchIngestUrl(options.endpoint);
     this.props.debug = Boolean(options.debug);
     this.flushIntervalMs = options.flushIntervalMs ?? 5_000;
     this.props.storagePrefix = `sankofa:${hashString(
@@ -331,6 +335,7 @@ export class SankofaBrowserClient {
       replayChunkUrl: this.props.replayChunkUrl!.toString(),
       replayConfigUrl: this.props.replayConfigUrl!.toString(),
       switchExposuresUrl: this.props.switchExposuresUrl!.toString(),
+      catchIngestUrl: this.props.catchIngestUrl!.toString(),
       distinctId: idState.distinctId,
       anonymousId: idState.anonymousId,
       identifiedId: idState.identifiedId,

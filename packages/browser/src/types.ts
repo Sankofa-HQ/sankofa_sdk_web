@@ -74,6 +74,12 @@ export interface SankofaClientSnapshot {
    * fire-and-forget from the plugin's perspective.
    */
   switchExposuresUrl: string;
+  /**
+   * POST endpoint for Sankofa Catch event batches. The Catch plugin
+   * reads this at setup time; host apps don't need to plumb the URL
+   * manually.
+   */
+  catchIngestUrl: string;
   distinctId: string;
   anonymousId: string;
   identifiedId: string | null;

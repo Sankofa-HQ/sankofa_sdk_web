@@ -89,6 +89,19 @@ export function resolveSwitchExposuresUrl(endpoint: string): URL {
   return url;
 }
 
+/**
+ * Catch event ingest URL: POST /api/catch/events. Public, rate-
+ * limited, x-api-key-authenticated endpoint that accepts batched
+ * CatchEventV1 payloads. The Catch plugin reads this URL from the
+ * client snapshot at setup time — no explicit endpoint option
+ * required.
+ */
+export function resolveCatchIngestUrl(endpoint: string): URL {
+  const url = resolveServerBaseUrl(endpoint);
+  url.pathname = toPathname([...trimPathSegments(url.pathname), "api", "catch", "events"]);
+  return url;
+}
+
 export function serializeTransportProperties(
   properties: SankofaPropertyMap,
 ): Record<string, string> {
