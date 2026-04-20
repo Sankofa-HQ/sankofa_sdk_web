@@ -412,6 +412,31 @@ export class SankofaBrowserClient {
     urlWithInstalled.searchParams.set("installed", installed);
     urlWithInstalled.searchParams.set("sdk", "web");
 
+    // ── Device context for Switch/Config targeting ──────────────────
+    //
+    // The server's evaluator needs `distinct_id` to bucket rollouts
+    // deterministically, resolve cohort membership, and honor user
+    // allow-lists. Without it every browser session looks identical
+    // and the targeting engine falls back to "everyone matches the
+    // empty bucket". Same goes for app version + platform for the
+    // version-range + platform-specific conditions.
+    const snap = this.getSnapshot();
+    if (snap?.distinctId) {
+      urlWithInstalled.searchParams.set("distinct_id", snap.distinctId);
+    }
+    urlWithInstalled.searchParams.set("platform", "web");
+    if (typeof navigator !== "undefined" && navigator.language) {
+      urlWithInstalled.searchParams.set("locale", navigator.language);
+    }
+    // App version — fall back to the SDK lib version so the server's
+    // semver comparisons always have something to work with. Host apps
+    // that want precise version targeting should configure it via
+    // `init({ appVersion })` when we add that option.
+    const appVersion = SANKOFA_BROWSER_VERSION;
+    if (appVersion) {
+      urlWithInstalled.searchParams.set("app_version", appVersion);
+    }
+
     // Stale-while-revalidate: the server emits a composite ETag over
     // every module that publishes one. We persist that etag + the last
     // modules payload so the next boot can restore instantly AND the
