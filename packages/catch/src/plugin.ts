@@ -4,6 +4,8 @@ import { BreadcrumbsAutocapture, BreadcrumbsBuffer } from './breadcrumbs';
 import { SankofaCatchClient } from './client';
 import { installGlobalHandlers, type InstalledHandlers } from './handlers';
 import { Transport } from './transport';
+import { PerfTransport } from './perf-transport';
+import { WebVitals, emitNavigationTransaction, type PerfSink } from './perf';
 import type { CatchHandshakeConfig, SankofaCatchAPI } from './types';
 
 /**
@@ -89,6 +91,13 @@ export interface CatchPluginOptions {
    *   })
    */
   readConfigSnapshot?: () => Record<string, unknown> | undefined;
+
+  /**
+   * Emit Web Vitals (LCP, CLS, FCP, INP, TTFB) via PerformanceObserver
+   * and a single `pageload` transaction summarising the navigation
+   * timeline. Default true. Set to false in diagnostic-only builds.
+   */
+  capturePerformance?: boolean;
 }
 
 /**
@@ -176,17 +185,66 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
         debug,
       });
 
+      // ── Performance (M7) ─────────────────────────────────────────
+      // Web Vitals + pageload transaction. Kept in the plugin wire-up
+      // so host apps get it for free once catchPlugin is registered;
+      // opt out via options.capturePerformance=false.
+      let perfTransport: PerfTransport | null = null;
+      let webVitals: WebVitals | null = null;
+      if (options.capturePerformance !== false) {
+        perfTransport = new PerfTransport({
+          endpoint: snap.catchIngestUrl,
+          apiKey: snap.apiKey,
+          debug,
+        });
+        const perfSink: PerfSink = {
+          postVitals: (items) => perfTransport?.postVitals(items),
+          postTransactions: (items) => perfTransport?.postTransactions(items),
+          snapshot: () => {
+            const s = context.getSnapshot();
+            return {
+              distinctId: s.distinctId,
+              anonymousId: s.anonymousId,
+              sessionId: s.sessionId,
+              release: options.release,
+              environment: options.environment ?? 'live',
+            };
+          },
+        };
+        webVitals = new WebVitals(perfSink);
+        try {
+          webVitals.start();
+        } catch (err) {
+          debug('webVitals start failed', err);
+        }
+        // Emit the pageload transaction after load so the navigation
+        // timing entry is populated. Fires once; subsequent SPA
+        // navigations are outside V1 scope.
+        const emitPageload = () => {
+          try { emitNavigationTransaction(perfSink); } catch (err) { debug('pageload failed', err); }
+        };
+        if (typeof document !== 'undefined' && document.readyState === 'complete') {
+          // Give the browser a beat so loadEventEnd is non-zero.
+          setTimeout(emitPageload, 0);
+        } else if (typeof window !== 'undefined') {
+          window.addEventListener('load', () => setTimeout(emitPageload, 0), { once: true });
+        }
+      }
+
       return {
         applyHandshake(cfg: unknown) {
           client.applyHandshake(cfg as CatchHandshakeConfig | undefined);
         },
         async flush() {
           await client.flush();
+          await perfTransport?.flush();
         },
         async shutdown() {
           installed?.uninstall();
           autocapture.uninstall();
           transport.shutdown();
+          webVitals?.stop();
+          perfTransport?.shutdown();
           singleton = null;
         },
       };

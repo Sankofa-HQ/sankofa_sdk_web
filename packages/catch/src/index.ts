@@ -18,8 +18,16 @@ export type {
   RequestContext,
   SankofaCatchAPI,
   SDKInfo,
+  SpanStatus,
+  SpanWire,
   StackFrame,
   StackTrace,
+  TransactionBatch,
+  TransactionWire,
   UserContext,
+  VitalMetric,
+  VitalRating,
+  VitalsBatch,
+  WebVitalWire,
 } from './types';
 export { WireVersionCurrent } from './types';

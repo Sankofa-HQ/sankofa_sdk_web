@@ -261,3 +261,90 @@ export interface SankofaCatchAPI {
   /** Force-flush the transport. Promise resolves when the batch is POSTed. */
   flush(): Promise<void>;
 }
+
+// ── M7: Performance wire types ───────────────────────────────────────
+
+export type VitalMetric = 'lcp' | 'fid' | 'cls' | 'inp' | 'ttfb' | 'fcp' | 'fp';
+export type VitalRating = 'good' | 'needs-improvement' | 'poor';
+
+export interface WebVitalWire {
+  wire_version: typeof WireVersionCurrent;
+  event_id: string;
+  environment: 'live' | 'test';
+  distinct_id?: string;
+  anon_id?: string;
+  session_id?: string;
+  release?: string;
+  platform: Platform;
+  sdk: SDKInfo;
+  metric: VitalMetric;
+  value: number;
+  rating?: VitalRating;
+  id?: string;
+  url?: string;
+  navigation?: 'navigate' | 'reload' | 'back-forward' | 'prerender';
+  ts_ms: number;
+  device?: DeviceContext;
+  tags?: Record<string, string>;
+}
+
+export interface VitalsBatch {
+  wire_version: typeof WireVersionCurrent;
+  vitals: WebVitalWire[];
+}
+
+export type SpanStatus =
+  | 'ok'
+  | 'cancelled'
+  | 'internal_error'
+  | 'not_found'
+  | 'unauthenticated'
+  | 'permission_denied'
+  | 'failed_precondition'
+  | (string & {});
+
+export interface SpanWire {
+  span_id: string;
+  parent_span_id?: string;
+  op: string;
+  description?: string;
+  start_ms: number;
+  end_ms: number;
+  status?: SpanStatus;
+  tags?: Record<string, string>;
+  data?: Record<string, unknown>;
+}
+
+export interface TransactionWire {
+  wire_version: typeof WireVersionCurrent;
+  event_id: string;
+  environment: 'live' | 'test';
+  distinct_id?: string;
+  anon_id?: string;
+  session_id?: string;
+  release?: string;
+  server_name?: string;
+  platform: Platform;
+  sdk: SDKInfo;
+  trace_id: string;
+  span_id: string;
+  parent_span_id?: string;
+  name: string;
+  op: string;
+  start_ms: number;
+  end_ms: number;
+  status?: SpanStatus;
+  http_status?: number;
+  sample_rate?: number;
+  tags?: Record<string, string>;
+  data?: Record<string, unknown>;
+  user?: UserContext;
+  device?: DeviceContext;
+  request?: RequestContext;
+  spans?: SpanWire[];
+}
+
+export interface TransactionBatch {
+  wire_version: typeof WireVersionCurrent;
+  transactions: TransactionWire[];
+}
