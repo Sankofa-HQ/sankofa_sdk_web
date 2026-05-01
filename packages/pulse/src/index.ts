@@ -4,6 +4,7 @@ export { SurveyRenderer } from './renderer';
 export { SurveyState } from './state';
 export { evaluate as evaluateTargeting, stableHash } from './targeting';
 export { resolveNext, evaluateCondition } from './branching';
+export { Translator, buildTranslator, resolveLocale } from './i18n';
 export {
   BRANCHING_END_OF_SURVEY,
 } from './types';
@@ -31,6 +32,7 @@ export type {
   AnswerState,
   Outcome,
   SurveyBundle,
+  TranslationStrings,
   SubmitPayload,
   PulseShowOptions,
   SankofaPulseAPI,

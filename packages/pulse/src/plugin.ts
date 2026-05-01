@@ -158,6 +158,7 @@ class PulseImpl implements SankofaPulseAPI {
     this.active = new SurveyRenderer({
       bundle,
       mount: options.mount,
+      locale: options.locale,
       onAnswerChange: ({ answers, currentQuestionId }) => {
         // Save partials in the background. Failure logs but
         // doesn't disrupt the form.

@@ -42,7 +42,11 @@ export type QuestionKind =
   | 'ranking'
   | 'matrix'
   | 'consent'
-  | 'image_choice';
+  | 'image_choice'
+  | 'maxdiff'
+  | 'signature'
+  | 'file'
+  | 'payment';
 
 export interface QuestionOption {
   key: string;
@@ -216,10 +220,24 @@ export interface SurveyTheme {
 }
 
 /**
+ * Per-locale string overrides keyed by path:
+ *
+ *   "survey.name"
+ *   "survey.description"
+ *   "question.<question_id>.prompt"
+ *   "question.<question_id>.helptext"
+ *   "question.<question_id>.option.<option_key>.label"
+ *
+ * Missing keys fall back to the source string on the survey /
+ * question / option object.
+ */
+export type TranslationStrings = Record<string, string>;
+
+/**
  * Everything the SDK needs to render one survey: the survey row,
  * its questions in order, its targeting + branching rules, the
- * optional theme, and any resumed partial state. Loaded once via
- * PulseClient.loadSurvey().
+ * optional theme, per-locale translations, and any resumed
+ * partial state. Loaded once via PulseClient.loadSurvey().
  */
 export interface SurveyBundle {
   survey: Survey;
@@ -227,6 +245,8 @@ export interface SurveyBundle {
   targeting_rules: TargetingRule[];
   branching_rules: BranchingRule[];
   theme?: SurveyTheme | null;
+  /** Locale → keyed string map. */
+  translations?: Record<string, TranslationStrings>;
   /** Partial state to resume from, if any. */
   partial?: {
     answers: AnswerState;
@@ -266,6 +286,13 @@ export interface PulseShowOptions {
   };
   /** Suppress the eligibility check (force-show). Useful for previews. */
   skipEligibility?: boolean;
+  /**
+   * BCP-47 locale to render. When matching translation keys exist
+   * on the survey, source strings are replaced before render. Falls
+   * back to source on miss; falls back further to the browser's
+   * preferred locale when undefined.
+   */
+  locale?: string;
 }
 
 export interface SankofaPulseAPI {

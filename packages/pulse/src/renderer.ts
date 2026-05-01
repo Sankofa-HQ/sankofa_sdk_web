@@ -23,6 +23,7 @@
  *     auto-skip with a debug warning.
  */
 
+import { buildTranslator, type Translator } from './i18n';
 import { SurveyState } from './state';
 import type {
   AnswerState,
@@ -46,6 +47,12 @@ export interface RendererOptions {
    * column rather than overlaying it.
    */
   inline?: boolean;
+  /**
+   * BCP-47 locale to render. When matching translation keys exist
+   * on the bundle, source strings are replaced. Falls back to
+   * source on miss; falls back further to navigator.language.
+   */
+  locale?: string;
   /**
    * Called whenever the user advances. The host wires this to
    * PulseClient.savePartial so the partial stays fresh between
@@ -330,6 +337,76 @@ const STYLES = `
   font-size: 11px; color: var(--sankofa-pulse-fg);
   text-align: center; line-height: 1.3;
 }
+[${ROOT_ATTR}] .sankofa-pulse-maxdiff {
+  width: 100%; border-collapse: collapse; margin-top: 8px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-maxdiff th,
+[${ROOT_ATTR}] .sankofa-pulse-maxdiff td {
+  padding: 6px 8px; text-align: center;
+  border-bottom: 1px solid var(--sankofa-pulse-border);
+}
+[${ROOT_ATTR}] .sankofa-pulse-maxdiff th {
+  font-size: 11px; color: var(--sankofa-pulse-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+[${ROOT_ATTR}] .sankofa-pulse-maxdiff-label {
+  text-align: left !important; color: var(--sankofa-pulse-fg);
+}
+[${ROOT_ATTR}] .sankofa-pulse-signature {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-signature-canvas {
+  border: 1px dashed var(--sankofa-pulse-border);
+  border-radius: 6px;
+  background: var(--sankofa-pulse-bg);
+  cursor: crosshair;
+  max-width: 100%;
+}
+[${ROOT_ATTR}] .sankofa-pulse-signature-clear {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--sankofa-pulse-border);
+  color: var(--sankofa-pulse-muted);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+[${ROOT_ATTR}] .sankofa-pulse-signature-clear:hover {
+  color: var(--sankofa-pulse-fg);
+  border-color: var(--sankofa-pulse-fg);
+}
+[${ROOT_ATTR}] .sankofa-pulse-file {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-file-input {
+  font-size: 12px; color: var(--sankofa-pulse-fg);
+}
+[${ROOT_ATTR}] .sankofa-pulse-file-status {
+  font-size: 11px; color: var(--sankofa-pulse-muted);
+  min-height: 14px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-payment {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 8px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-payment-button {
+  align-self: flex-start;
+  background: var(--sankofa-pulse-accent);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+[${ROOT_ATTR}] .sankofa-pulse-payment-button:disabled {
+  opacity: .6; cursor: not-allowed;
+}
+[${ROOT_ATTR}] .sankofa-pulse-payment-status {
+  font-size: 11px; color: var(--sankofa-pulse-muted);
+  min-height: 14px;
+}
 `;
 
 export class SurveyRenderer {
@@ -338,6 +415,7 @@ export class SurveyRenderer {
   private root: HTMLElement;
   private mount: HTMLElement;
   private opts: RendererOptions;
+  private translator: Translator | null;
   private currentError: string | null = null;
   private dismissed = false;
 
@@ -345,6 +423,7 @@ export class SurveyRenderer {
     this.bundle = opts.bundle;
     this.opts = opts;
     this.mount = opts.mount ?? document.body;
+    this.translator = buildTranslator(opts.bundle, opts.locale);
     ensureStyles();
     this.state = new SurveyState(
       opts.bundle.questions,
@@ -405,7 +484,13 @@ export class SurveyRenderer {
     const inputContainer = document.createElement('div');
     body.appendChild(inputContainer);
     const valueRef: { current: unknown } = { current: answer };
-    renderInput(q, valueRef, () => this.onAnswerChange(q, valueRef.current), inputContainer);
+    renderInput(
+      q,
+      valueRef,
+      () => this.onAnswerChange(q, valueRef.current),
+      inputContainer,
+      this.translator,
+    );
     if (this.currentError) {
       const errEl = document.createElement('div');
       errEl.className = 'sankofa-pulse-error';
@@ -429,8 +514,9 @@ export class SurveyRenderer {
       logo.alt = survey.name;
       title.appendChild(logo);
     }
+    const localizedName = this.translator?.surveyName(survey) ?? survey.name;
     const text = document.createElement('span');
-    text.textContent = survey.name;
+    text.textContent = localizedName;
     title.appendChild(text);
     const progress = document.createElement('span');
     progress.className = 'sankofa-pulse-progress';
@@ -450,12 +536,13 @@ export class SurveyRenderer {
     const wrap = document.createElement('div');
     const prompt = document.createElement('div');
     prompt.className = 'sankofa-pulse-prompt';
-    prompt.textContent = q.prompt;
+    prompt.textContent = this.translator?.questionPrompt(q) ?? q.prompt;
     wrap.appendChild(prompt);
-    if (q.helptext) {
+    const helpText = this.translator?.questionHelptext(q) ?? q.helptext;
+    if (helpText) {
       const help = document.createElement('div');
       help.className = 'sankofa-pulse-helptext';
-      help.textContent = q.helptext;
+      help.textContent = helpText;
       wrap.appendChild(help);
     }
     return wrap;
@@ -551,9 +638,10 @@ function renderInput(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   const renderer = kindRenderers[q.kind] ?? renderUnsupported;
-  renderer(q, valueRef, onChange, container);
+  renderer(q, valueRef, onChange, container, translator);
 }
 
 type KindRenderer = (
@@ -561,6 +649,7 @@ type KindRenderer = (
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ) => void;
 
 const kindRenderers: Partial<Record<SurveyQuestion['kind'], KindRenderer>> = {
@@ -579,6 +668,10 @@ const kindRenderers: Partial<Record<SurveyQuestion['kind'], KindRenderer>> = {
   matrix: renderMatrix,
   consent: renderConsent,
   image_choice: renderImageChoice,
+  maxdiff: renderMaxDiff,
+  signature: renderSignature,
+  file: renderFile,
+  payment: renderPayment,
 };
 
 function renderShortText(
@@ -696,6 +789,7 @@ function renderSingle(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   const wrap = document.createElement('div');
   wrap.className = 'sankofa-pulse-options';
@@ -703,7 +797,7 @@ function renderSingle(
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'sankofa-pulse-option-btn';
-    btn.textContent = opt.label;
+    btn.textContent = translator?.optionLabel(q, opt) ?? opt.label;
     btn.dataset.selected = valueRef.current === opt.key ? 'true' : 'false';
     btn.addEventListener('click', () => {
       valueRef.current = opt.key;
@@ -723,6 +817,7 @@ function renderMulti(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   const wrap = document.createElement('div');
   wrap.className = 'sankofa-pulse-options';
@@ -735,7 +830,7 @@ function renderMulti(
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'sankofa-pulse-option-btn';
-    btn.textContent = opt.label;
+    btn.textContent = translator?.optionLabel(q, opt) ?? opt.label;
     btn.dataset.selected = selected.has(opt.key) ? 'true' : 'false';
     btn.addEventListener('click', () => {
       if (selected.has(opt.key)) selected.delete(opt.key);
@@ -878,6 +973,7 @@ function renderRanking(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   const options = q.options ?? [];
   if (options.length === 0) return;
@@ -914,7 +1010,7 @@ function renderRanking(
 
       const label = document.createElement('span');
       label.className = 'sankofa-pulse-rank-label';
-      label.textContent = opt.label;
+      label.textContent = translator?.optionLabel(q, opt) ?? opt.label;
 
       const controls = document.createElement('div');
       controls.className = 'sankofa-pulse-rank-controls';
@@ -1020,6 +1116,7 @@ function renderConsent(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   // Consent stores `true` only — explicit affirmative consent.
   // Initial valueRef preserved across re-renders (e.g. back-button
@@ -1038,7 +1135,8 @@ function renderConsent(
   // The legal copy lives in helptext per the composer convention.
   // Prompt above already shows the short label ("I agree…");
   // helptext carries the long-form disclosure.
-  text.textContent = q.helptext ?? 'I agree.';
+  text.textContent =
+    translator?.questionHelptext(q) ?? q.helptext ?? 'I agree.';
 
   checkbox.addEventListener('change', () => {
     valueRef.current = checkbox.checked ? true : undefined;
@@ -1055,6 +1153,7 @@ function renderImageChoice(
   valueRef: { current: unknown },
   onChange: () => void,
   container: HTMLElement,
+  translator: Translator | null,
 ): void {
   const options = q.options ?? [];
   if (options.length === 0) return;
@@ -1063,6 +1162,7 @@ function renderImageChoice(
   grid.className = 'sankofa-pulse-image-grid';
 
   options.forEach((opt) => {
+    const localizedLabel = translator?.optionLabel(q, opt) ?? opt.label;
     const tile = document.createElement('button');
     tile.type = 'button';
     tile.className = 'sankofa-pulse-image-tile';
@@ -1071,14 +1171,14 @@ function renderImageChoice(
     if (opt.image_url) {
       const img = document.createElement('img');
       img.src = opt.image_url;
-      img.alt = opt.label;
+      img.alt = localizedLabel;
       img.loading = 'lazy';
       tile.appendChild(img);
     }
 
     const label = document.createElement('span');
     label.className = 'sankofa-pulse-image-tile-label';
-    label.textContent = opt.label;
+    label.textContent = localizedLabel;
     tile.appendChild(label);
 
     tile.addEventListener('click', () => {
@@ -1094,6 +1194,471 @@ function renderImageChoice(
   });
 
   container.appendChild(grid);
+}
+
+/**
+ * MaxDiff: best/worst scaling. Renderer is a two-column radio group
+ * — a "best" column on the left, a "worst" column on the right,
+ * with the option labels between them. Mutually exclusive: clicking
+ * the same row in both columns auto-clears the other (the server
+ * rejects best == worst, so we forbid it client-side too).
+ *
+ * State shape: { best: string | undefined, worst: string | undefined }
+ * — flat object so the submit path can JSON.stringify directly.
+ */
+function renderMaxDiff(
+  q: SurveyQuestion,
+  valueRef: { current: unknown },
+  onChange: () => void,
+  container: HTMLElement,
+): void {
+  const options = q.options ?? [];
+  if (options.length < 2) return;
+
+  type State = { best?: string; worst?: string };
+  const initial: State =
+    valueRef.current && typeof valueRef.current === 'object' && !Array.isArray(valueRef.current)
+      ? { ...(valueRef.current as State) }
+      : {};
+  valueRef.current = initial;
+
+  const table = document.createElement('table');
+  table.className = 'sankofa-pulse-maxdiff';
+
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Best', '', 'Worst'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const body = document.createElement('tbody');
+  options.forEach((opt) => {
+    const row = document.createElement('tr');
+
+    const bestCell = document.createElement('td');
+    const bestInput = document.createElement('input');
+    bestInput.type = 'radio';
+    bestInput.name = `maxdiff-best-${q.id}`;
+    bestInput.value = opt.key;
+    bestInput.checked = initial.best === opt.key;
+    bestInput.addEventListener('change', () => {
+      const next: State = { ...(valueRef.current as State) };
+      next.best = opt.key;
+      // If the same row was the worst pick, clear it — best ==
+      // worst is invalid server-side.
+      if (next.worst === opt.key) next.worst = undefined;
+      valueRef.current = next;
+      onChange();
+      // Re-render disabled states so the worst column reflects the
+      // new constraint without a full re-render.
+      refreshDisabled();
+    });
+    bestCell.appendChild(bestInput);
+
+    const labelCell = document.createElement('td');
+    labelCell.className = 'sankofa-pulse-maxdiff-label';
+    labelCell.textContent = opt.label;
+
+    const worstCell = document.createElement('td');
+    const worstInput = document.createElement('input');
+    worstInput.type = 'radio';
+    worstInput.name = `maxdiff-worst-${q.id}`;
+    worstInput.value = opt.key;
+    worstInput.checked = initial.worst === opt.key;
+    worstInput.addEventListener('change', () => {
+      const next: State = { ...(valueRef.current as State) };
+      next.worst = opt.key;
+      if (next.best === opt.key) next.best = undefined;
+      valueRef.current = next;
+      onChange();
+      refreshDisabled();
+    });
+    worstCell.appendChild(worstInput);
+
+    row.appendChild(bestCell);
+    row.appendChild(labelCell);
+    row.appendChild(worstCell);
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  container.appendChild(table);
+
+  // Disable the "best" radio of the row currently picked as worst
+  // (and vice versa) so the user can't even attempt the invalid
+  // pairing. The change handler above also clears it; this is the
+  // visual companion.
+  function refreshDisabled() {
+    const state = valueRef.current as State;
+    table.querySelectorAll('input[type="radio"]').forEach((el) => {
+      const input = el as HTMLInputElement;
+      const isBest = input.name.startsWith('maxdiff-best-');
+      const conflict = isBest
+        ? state.worst === input.value
+        : state.best === input.value;
+      input.disabled = conflict && !input.checked;
+    });
+  }
+  refreshDisabled();
+}
+
+/**
+ * Signature: hand-drawn input on a <canvas>. Captures pointer
+ * events (mouse + touch + stylus) and exports as a PNG data URI on
+ * change. Includes a Clear button — clearing returns the answer to
+ * "skipped" so the Required gate kicks in if the user un-signs.
+ *
+ * Validation block can carry {"max_kb": 500}; we don't preflight
+ * that on the client (server enforces) but we do cap canvas size
+ * so casual scribbles stay well under the limit. A 600×200 PNG
+ * with typical signature density runs ~5-30 KB.
+ */
+function renderSignature(
+  q: SurveyQuestion,
+  valueRef: { current: unknown },
+  onChange: () => void,
+  container: HTMLElement,
+): void {
+  const wrap = document.createElement('div');
+  wrap.className = 'sankofa-pulse-signature';
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'sankofa-pulse-signature-canvas';
+  // Logical drawing surface — devicePixelRatio scaling lifts crispness
+  // on retina without doubling the export size.
+  const cssWidth = 600;
+  const cssHeight = 200;
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  // Cooperate with touch gesture handling — preventDefault on
+  // pointermove so vertical strokes don't scroll the page.
+  canvas.style.touchAction = 'none';
+
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#18181b';
+  }
+
+  // Restore prior signature if the renderer is re-mounted (back
+  // navigation across questions).
+  let dirty = false;
+  if (typeof valueRef.current === 'string' && valueRef.current.startsWith('data:image/')) {
+    dirty = true;
+    const img = new Image();
+    img.onload = () => ctx?.drawImage(img, 0, 0, cssWidth, cssHeight);
+    img.src = valueRef.current as string;
+  }
+
+  let drawing = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  const point = (e: PointerEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    drawing = true;
+    canvas.setPointerCapture(e.pointerId);
+    const { x, y } = point(e);
+    lastX = x;
+    lastY = y;
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing || !ctx) return;
+    e.preventDefault();
+    const { x, y } = point(e);
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    lastX = x;
+    lastY = y;
+    dirty = true;
+  });
+  const endStroke = (e: PointerEvent) => {
+    if (!drawing) return;
+    drawing = false;
+    if (canvas.hasPointerCapture(e.pointerId)) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+    if (dirty) {
+      valueRef.current = canvas.toDataURL('image/png');
+      onChange();
+    }
+  };
+  canvas.addEventListener('pointerup', endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
+  canvas.addEventListener('pointerleave', endStroke);
+
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'sankofa-pulse-signature-clear';
+  clearBtn.textContent = 'Clear';
+  clearBtn.addEventListener('click', () => {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    dirty = false;
+    valueRef.current = undefined;
+    onChange();
+  });
+
+  wrap.appendChild(canvas);
+  wrap.appendChild(clearBtn);
+  container.appendChild(wrap);
+
+  void q;
+}
+
+/**
+ * File upload. Two-stage: the user picks a file, the SDK uploads
+ * to whatever endpoint the host configured, and the answer carries
+ * the resulting URL + metadata.
+ *
+ * For v1 the upload endpoint is window-level config — host apps set
+ * `window.__sankofaPulseUploadURL` to a server route that accepts a
+ * multipart POST and returns `{url, name?, size_bytes?, mime_type?}`.
+ * Without that endpoint, the renderer falls back to embedding a
+ * data URI (suitable only for small files; capped at 1 MB to avoid
+ * blowing the response payload). Either path produces the same
+ * answer shape the server expects.
+ */
+function renderFile(
+  q: SurveyQuestion,
+  valueRef: { current: unknown },
+  onChange: () => void,
+  container: HTMLElement,
+): void {
+  const wrap = document.createElement('div');
+  wrap.className = 'sankofa-pulse-file';
+
+  const validation = (q.validation ?? {}) as {
+    accept?: string[];
+    max_kb?: number;
+  };
+  const maxKB = validation.max_kb && validation.max_kb > 0 ? validation.max_kb : 10240;
+  const accept = (validation.accept ?? []).join(',');
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.className = 'sankofa-pulse-file-input';
+  if (accept) input.accept = accept;
+
+  const status = document.createElement('div');
+  status.className = 'sankofa-pulse-file-status';
+
+  const renderStatus = () => {
+    const v = valueRef.current as
+      | { name?: string; size_bytes?: number; url?: string }
+      | undefined;
+    if (!v || !v.url) {
+      status.textContent = '';
+      return;
+    }
+    const sizeKB = v.size_bytes ? Math.round(v.size_bytes / 1024) : 0;
+    status.textContent = `${v.name ?? 'attachment'}${sizeKB ? ` · ${sizeKB} KB` : ''}`;
+  };
+
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > maxKB * 1024) {
+      status.textContent = `File too large (max ${maxKB} KB)`;
+      input.value = '';
+      return;
+    }
+    status.textContent = 'Uploading…';
+    try {
+      const result = await uploadFile(file);
+      valueRef.current = result;
+      renderStatus();
+      onChange();
+    } catch (err) {
+      status.textContent =
+        err instanceof Error ? `Upload failed: ${err.message}` : 'Upload failed';
+      valueRef.current = undefined;
+      onChange();
+    }
+  });
+
+  wrap.appendChild(input);
+  wrap.appendChild(status);
+  container.appendChild(wrap);
+  renderStatus();
+}
+
+interface UploadedFile {
+  url: string;
+  name?: string;
+  size_bytes?: number;
+  mime_type?: string;
+}
+
+async function uploadFile(file: File): Promise<UploadedFile> {
+  const endpoint =
+    typeof window !== 'undefined'
+      ? ((window as unknown as { __sankofaPulseUploadURL?: string })
+          .__sankofaPulseUploadURL ?? '')
+      : '';
+
+  if (endpoint) {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(endpoint, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as Partial<UploadedFile>;
+    if (!body.url) throw new Error('upload endpoint returned no url');
+    return {
+      url: body.url,
+      name: body.name ?? file.name,
+      size_bytes: body.size_bytes ?? file.size,
+      mime_type: body.mime_type ?? file.type,
+    };
+  }
+
+  // No upload endpoint — embed as data URI. Capped at 1 MB so we
+  // don't ship a huge base64 blob in the response payload.
+  if (file.size > 1024 * 1024) {
+    throw new Error(
+      'no upload endpoint configured (window.__sankofaPulseUploadURL); files >1MB rejected in fallback mode',
+    );
+  }
+  const dataURL = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+  return {
+    url: dataURL,
+    name: file.name,
+    size_bytes: file.size,
+    mime_type: file.type,
+  };
+}
+
+/**
+ * Payment: confirms a Stripe / Paystack-style payment intent. The
+ * actual payment flow is the host's responsibility — we expose a
+ * "Pay …" button that calls window.__sankofaPulsePay (a host-
+ * configured async function) and stores the resulting intent
+ * confirmation as the answer.
+ *
+ * Without a configured payment handler, the renderer shows an
+ * inline note instructing the host to wire up __sankofaPulsePay.
+ * No mock / stub mode — payments are too sensitive to fake.
+ */
+function renderPayment(
+  q: SurveyQuestion,
+  valueRef: { current: unknown },
+  onChange: () => void,
+  container: HTMLElement,
+): void {
+  const validation = (q.validation ?? {}) as {
+    amount_min?: number;
+    amount_max?: number;
+    amount?: number;
+    currency?: string;
+  };
+  const amount = validation.amount ?? validation.amount_min ?? 0;
+  const currency = (validation.currency ?? 'USD').toUpperCase();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sankofa-pulse-payment';
+
+  const status = document.createElement('div');
+  status.className = 'sankofa-pulse-payment-status';
+
+  const handler =
+    typeof window !== 'undefined'
+      ? (window as unknown as {
+          __sankofaPulsePay?: (req: {
+            amount: number;
+            currency: string;
+            question_id: string;
+          }) => Promise<{
+            intent_id: string;
+            status: string;
+            amount?: number;
+            currency?: string;
+          }>;
+        }).__sankofaPulsePay
+      : undefined;
+
+  const renderConfirmation = () => {
+    const v = valueRef.current as
+      | { intent_id?: string; status?: string }
+      | undefined;
+    if (v?.intent_id) {
+      status.textContent = `Confirmed · ${v.status ?? 'submitted'} · ${v.intent_id}`;
+    }
+  };
+
+  if (!handler) {
+    status.textContent =
+      'Payment handler not configured. Set window.__sankofaPulsePay to enable.';
+    wrap.appendChild(status);
+    container.appendChild(wrap);
+    return;
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'sankofa-pulse-payment-button';
+  button.textContent = `Pay ${formatAmount(amount, currency)}`;
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    status.textContent = 'Processing…';
+    try {
+      const result = await handler({
+        amount,
+        currency: currency.toLowerCase(),
+        question_id: q.id,
+      });
+      valueRef.current = {
+        intent_id: result.intent_id,
+        status: result.status,
+        amount: result.amount ?? amount,
+        currency: (result.currency ?? currency).toLowerCase(),
+      };
+      renderConfirmation();
+      onChange();
+    } catch (err) {
+      status.textContent =
+        err instanceof Error ? `Payment failed: ${err.message}` : 'Payment failed';
+      button.disabled = false;
+    }
+  });
+
+  wrap.appendChild(button);
+  wrap.appendChild(status);
+  container.appendChild(wrap);
+  renderConfirmation();
+}
+
+function formatAmount(amount: number, currency: string): string {
+  if (typeof Intl !== 'undefined') {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency,
+      }).format(amount);
+    } catch {
+      /* fall through */
+    }
+  }
+  return `${amount} ${currency}`;
 }
 
 function renderUnsupported(
