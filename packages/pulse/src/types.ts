@@ -19,6 +19,8 @@ export interface Survey {
   description?: string;
   kind: SurveyKind;
   status: SurveyStatus;
+  /** Slug used by the public hosted URL: /s/:slug. */
+  slug?: string;
   published_at?: string | null;
   closed_at?: string | null;
   archived_at?: string | null;
@@ -195,15 +197,36 @@ export interface Outcome {
 // ── Renderer-facing aggregate ──────────────────────────────────────
 
 /**
+ * Branding row attached to a survey. All fields optional —
+ * unset values fall back to the renderer's built-in defaults.
+ */
+export interface SurveyTheme {
+  id?: string;
+  survey_id?: string;
+  primary_color?: string;
+  background_color?: string;
+  foreground_color?: string;
+  muted_color?: string;
+  border_color?: string;
+  font_family?: string;
+  logo_url?: string;
+  /** auto = follow system; light/dark = force palette. */
+  dark_mode?: 'auto' | 'light' | 'dark';
+  custom_css?: string;
+}
+
+/**
  * Everything the SDK needs to render one survey: the survey row,
- * its questions in order, its targeting + branching rules, and any
- * resumed partial state. Loaded once via PulseClient.loadSurvey().
+ * its questions in order, its targeting + branching rules, the
+ * optional theme, and any resumed partial state. Loaded once via
+ * PulseClient.loadSurvey().
  */
 export interface SurveyBundle {
   survey: Survey;
   questions: SurveyQuestion[];
   targeting_rules: TargetingRule[];
   branching_rules: BranchingRule[];
+  theme?: SurveyTheme | null;
   /** Partial state to resume from, if any. */
   partial?: {
     answers: AnswerState;

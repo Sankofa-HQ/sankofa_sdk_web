@@ -15,6 +15,7 @@ import type {
   Survey,
   SurveyBundle,
   SurveyQuestion,
+  SurveyTheme,
   TargetingRule,
   BranchingRule,
 } from './types';
@@ -54,6 +55,7 @@ export class PulseClient {
       questions: SurveyQuestion[];
       targeting_rules: TargetingRule[];
       branching_rules: BranchingRule[];
+      theme?: SurveyTheme | null;
       partial?: {
         answers: AnswerState;
         current_question_id?: string;
@@ -64,6 +66,7 @@ export class PulseClient {
       questions: bundle.questions ?? [],
       targeting_rules: bundle.targeting_rules ?? [],
       branching_rules: bundle.branching_rules ?? [],
+      theme: bundle.theme ?? null,
       partial: bundle.partial
         ? {
             answers: bundle.partial.answers ?? {},

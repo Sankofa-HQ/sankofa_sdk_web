@@ -39,3 +39,52 @@ export function useSankofa() {
 
 export { Sankofa };
 export type { SankofaInitOptions } from "@sankofa/browser";
+
+// Pulse surface — hooks + declarative modal for surveys. Re-exports
+// the @sankofa/pulse types so a host app only depends on
+// @sankofa/react when they pick the React adapter.
+export {
+  usePulse,
+  usePulseEvent,
+  SurveyModal,
+  pulsePlugin,
+  getPulse,
+  PulseClient,
+  SurveyRenderer,
+  SurveyState,
+} from './pulse';
+
+export type {
+  SurveyModalProps,
+} from './pulse';
+
+export type {
+  Survey,
+  SurveyKind,
+  SurveyStatus,
+  SurveyQuestion,
+  QuestionKind,
+  QuestionOption,
+  QuestionValidation,
+  SurveyTheme,
+  TargetingRule,
+  RuleKind,
+  MatchOp,
+  EligibilityContext,
+  Decision,
+  BranchingRule,
+  BranchingActionKind,
+  BranchingCondition,
+  CondKind,
+  CondOp,
+  AnswerState,
+  Outcome,
+  SurveyBundle,
+  SubmitPayload,
+  PulseShowOptions,
+  SankofaPulseAPI,
+  PulseEvent,
+  PulseEventListener,
+  PulseEventPayload,
+  PulsePluginOptions,
+} from './pulse';
