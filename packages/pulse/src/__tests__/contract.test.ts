@@ -48,6 +48,62 @@ test('pulse_submit_basic matches golden', () => {
   assertStructurallyEqual(golden, produced, '$');
 });
 
+test('pulse_submit_anonymous matches golden', () => {
+  // Fully anonymous: no respondent ids, minimal context. Catches
+  // regressions where the SDK fabricates empty strings for missing
+  // identity fields rather than omitting them.
+  const golden = readGolden('pulse_submit_anonymous.json');
+  const payload: SubmitPayload = {
+    survey_id: 'psv_anon_001',
+    respondent: {},
+    context: {
+      platform: 'contract-test',
+    },
+    answers: {
+      q1: 'anonymous',
+    },
+  };
+  const produced = JSON.parse(JSON.stringify(payload));
+  assertStructurallyEqual(golden, produced, '$');
+});
+
+test('pulse_submit_all_answer_kinds matches golden', () => {
+  // Every supported answer value type encoded into a single
+  // payload — catches encoder regressions that only affect a
+  // specific kind.
+  const golden = readGolden('pulse_submit_all_answer_kinds.json');
+  const payload: SubmitPayload = {
+    survey_id: 'psv_kinds_001',
+    respondent: {
+      external_id: 'ext_42',
+    },
+    context: {
+      platform: 'contract-test',
+      replay_session_id: 'rep_abc',
+    },
+    answers: {
+      short_text: 'hello',
+      long_text: 'the app feels slow when I open the cart screen',
+      number: 42,
+      rating: 4,
+      nps: 9,
+      single: 'key_pro',
+      multi: ['key_a', 'key_c'],
+      boolean: true,
+      slider: 75,
+      date: '2026-05-01',
+      ranking: ['key_b', 'key_a', 'key_c'],
+      matrix: { row_a: 'col_x', row_b: 'col_y' },
+      consent: true,
+      image_choice: 'key_blue',
+      maxdiff: { best: 'key_a', worst: 'key_c' },
+      signature: 'data:image/png;base64,iVBORw0KGgo=',
+    },
+  };
+  const produced = JSON.parse(JSON.stringify(payload));
+  assertStructurallyEqual(golden, produced, '$');
+});
+
 function readGolden(name: string): unknown {
   const file = resolveGolden(name);
   assert.ok(file, `golden file ${name} not found`);
