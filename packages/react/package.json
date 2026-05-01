@@ -20,6 +20,7 @@
   "sideEffects": false,
   "dependencies": {
     "@sankofa/browser": "0.1.2",
+    "@sankofa/pulse": "0.1.2",
     "react": "^19.2.3"
   },
   "peerDependencies": {
