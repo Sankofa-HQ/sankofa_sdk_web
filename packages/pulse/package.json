@@ -1,0 +1,43 @@
+{
+  "name": "@sankofa/pulse",
+  "version": "0.1.2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
+  },
+  "keywords": [
+    "sankofa",
+    "pulse",
+    "surveys",
+    "nps",
+    "csat",
+    "feedback"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "bundle": "node esbuild.config.js",
+    "test": "node --import tsx --test src/__tests__/*.test.ts"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "@sankofa/browser": "0.1.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}
