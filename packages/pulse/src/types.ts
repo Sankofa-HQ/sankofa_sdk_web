@@ -88,6 +88,7 @@ export interface SurveyQuestion {
 
 export type RuleKind =
   | 'url'
+  | 'screen'
   | 'event'
   | 'user_property'
   | 'cohort'
@@ -118,6 +119,9 @@ export interface TargetingRule {
   // url
   url_match?: MatchOp;
   url_value?: string;
+  // screen — same shape as url, applied to native screen / route name
+  screen_match?: MatchOp;
+  screen_name?: string;
   // event
   event_name?: string;
   event_min_count?: number;
@@ -143,6 +147,9 @@ export interface EligibilityContext {
   surveyId: string;
   respondentExternalId: string;
   pageUrl?: string;
+  /** Native screen / route name (mobile + Flutter SDKs). Empty on
+   *  web unless the host explicitly sets a route via plugin options. */
+  screenName?: string;
   recentEvents?: Record<string, number>;
   userProperties?: Record<string, unknown>;
   cohorts?: Record<string, boolean>;
@@ -216,8 +223,21 @@ export interface SurveyTheme {
   logo_url?: string;
   /** auto = follow system; light/dark = force palette. */
   dark_mode?: 'auto' | 'light' | 'dark';
+  /**
+   * Modal position on the viewport. Mobile breakpoints fall back to
+   * a bottom-sheet regardless of this value because corner-positioning
+   * on a 320-wide screen is unusable. Default: bottom-right.
+   */
+  position?: SurveyPosition;
   custom_css?: string;
 }
+
+export type SurveyPosition =
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'top-right'
+  | 'top-left'
+  | 'center';
 
 /**
  * Per-locale string overrides keyed by path:

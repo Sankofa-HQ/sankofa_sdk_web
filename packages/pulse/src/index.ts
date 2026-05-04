@@ -18,6 +18,7 @@ export type {
   QuestionOption,
   QuestionValidation,
   SurveyTheme,
+  SurveyPosition,
   TargetingRule,
   RuleKind,
   MatchOp,

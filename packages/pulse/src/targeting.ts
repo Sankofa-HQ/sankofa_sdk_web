@@ -48,6 +48,8 @@ function evaluateOne(
   switch (rule.kind) {
     case 'url':
       return evalUrl(rule, ctx);
+    case 'screen':
+      return evalScreen(rule, ctx);
     case 'event':
       return evalEvent(rule, ctx);
     case 'user_property':
@@ -98,6 +100,49 @@ function evalUrl(
     }
   }
   return [false, 'url_match unknown'];
+}
+
+// ── Screen ─────────────────────────────────────────────────────────
+//
+// Mirrors evalScreen in server/engine/ee/pulse/targeting/evaluator.go.
+// Web SDK fills ctx.screenName from a host-supplied value (custom
+// route name) when present; mobile + Flutter SDKs derive it from the
+// platform's own screen tracker. Empty screen name never matches —
+// see the rationale on the server side.
+
+function evalScreen(
+  rule: TargetingRule,
+  ctx: EligibilityContext,
+): [boolean, string] {
+  const screen = ctx.screenName ?? '';
+  const value = rule.screen_name ?? '';
+  if (screen === '') return [false, 'screen unknown'];
+  switch (rule.screen_match) {
+    case 'equals':
+      return screen === value
+        ? [true, '']
+        : [false, 'screen not equal to target'];
+    case 'contains':
+      return screen.includes(value)
+        ? [true, '']
+        : [false, 'screen does not contain target'];
+    case 'prefix':
+      return screen.startsWith(value)
+        ? [true, '']
+        : [false, 'screen does not start with target'];
+    case 'regex': {
+      let re: RegExp;
+      try {
+        re = new RegExp(value);
+      } catch {
+        return [false, 'screen regex did not compile'];
+      }
+      return re.test(screen)
+        ? [true, '']
+        : [false, 'screen does not match regex'];
+    }
+  }
+  return [false, 'screen_match unknown'];
 }
 
 // ── Event ──────────────────────────────────────────────────────────

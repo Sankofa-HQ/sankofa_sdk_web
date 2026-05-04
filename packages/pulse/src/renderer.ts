@@ -23,6 +23,7 @@
  *     auto-skip with a debug warning.
  */
 
+import { BRAND_ICON_DATA_URL } from './brand';
 import { buildTranslator, type Translator } from './i18n';
 import { SurveyState } from './state';
 import type {
@@ -71,12 +72,39 @@ const STYLE_ID = 'sankofa-pulse-styles';
 const ROOT_ATTR = 'data-sankofa-pulse-root';
 
 const STYLES = `
+/* Defensive isolation against host page CSS bleed.
+   Real customer apps routinely have global rules like
+   'button { box-shadow, transform, transition, font-weight }',
+   plus 'button:hover:not(:disabled) { ... }' which has 0,2,1
+   specificity and would beat a plain '[root] button' reset
+   (0,1,1). Reverting all CSS resets the base; !important on the
+   bleed-prone properties beats higher-specificity host rules
+   regardless of state (:hover, :focus, :active) without nuking
+   the SDK class rules below — those keep applying normally. */
+[${ROOT_ATTR}] button,
+[${ROOT_ATTR}] input,
+[${ROOT_ATTR}] textarea,
+[${ROOT_ATTR}] select,
+[${ROOT_ATTR}] a {
+  all: revert;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  box-shadow: none !important;
+  transform: none !important;
+}
 [${ROOT_ATTR}] {
   --sankofa-pulse-bg: #ffffff;
   --sankofa-pulse-fg: #18181b;
   --sankofa-pulse-muted: #71717a;
   --sankofa-pulse-accent: #f43f5e;
   --sankofa-pulse-border: #e4e4e7;
+  /* Default position is bottom-right. Position-specific selectors
+     below override the offsets — keep these as the fallback so a
+     theme without an explicit position still renders the way the
+     SDK has historically shipped. */
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -90,6 +118,42 @@ const STYLES = `
   z-index: 2147483600;
   overflow: hidden;
 }
+/* Position presets — applied via the data-sankofa-pulse-position
+   attribute set by applyTheme(). All four corners use a 24px gutter;
+   center docks the card horizontally + vertically with translate(). */
+[${ROOT_ATTR}][data-sankofa-pulse-position="bottom-right"] {
+  bottom: 24px; right: 24px; top: auto; left: auto;
+  transform: none;
+}
+[${ROOT_ATTR}][data-sankofa-pulse-position="bottom-left"] {
+  bottom: 24px; left: 24px; top: auto; right: auto;
+  transform: none;
+}
+[${ROOT_ATTR}][data-sankofa-pulse-position="top-right"] {
+  top: 24px; right: 24px; bottom: auto; left: auto;
+  transform: none;
+}
+[${ROOT_ATTR}][data-sankofa-pulse-position="top-left"] {
+  top: 24px; left: 24px; bottom: auto; right: auto;
+  transform: none;
+}
+[${ROOT_ATTR}][data-sankofa-pulse-position="center"] {
+  top: 50%; left: 50%; bottom: auto; right: auto;
+  transform: translate(-50%, -50%);
+}
+/* Phone-width fallback: corner positioning is unusable on a
+   320–414 wide viewport, so we collapse to a full-width bottom
+   sheet regardless of the chosen position. The center value keeps
+   its top-50% / translate(-50%) behaviour because it already reads
+   as a centred sheet on small screens. */
+@media (max-width: 480px) {
+  [${ROOT_ATTR}]:not([data-sankofa-pulse-inline="true"]):not([data-sankofa-pulse-position="center"]) {
+    bottom: 0; right: 0; left: 0; top: auto;
+    width: 100%;
+    border-radius: 12px 12px 0 0;
+    transform: none;
+  }
+}
 /**
  * Inline mode — for the hosted page (/s/:slug) and host apps that
  * embed the survey inside a layout column instead of overlaying.
@@ -99,7 +163,11 @@ const STYLES = `
 [${ROOT_ATTR}][data-sankofa-pulse-inline="true"] {
   position: relative;
   bottom: auto; right: auto;
-  width: 100%;
+  /* Even in inline / hosted-page mode the survey is always a real
+     card — it never stretches to fill its parent. */
+  width: min(420px, 100%);
+  margin-left: auto;
+  margin-right: auto;
   box-shadow: none;
   z-index: auto;
 }
@@ -141,7 +209,13 @@ const STYLES = `
 }
 [${ROOT_ATTR}] .sankofa-pulse-close:hover { color: var(--sankofa-pulse-fg); }
 [${ROOT_ATTR}] .sankofa-pulse-body {
-  padding: 16px; max-height: 60vh; overflow-y: auto;
+  padding: 16px;
+  /* Tight pixel ceiling so the card stays usable inside small
+     viewports (mobile bottom-sheet, sidebar embed) where a vh-based
+     ceiling would produce a card taller than the page. */
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 [${ROOT_ATTR}] .sankofa-pulse-prompt {
   font-size: 14px; font-weight: 500; line-height: 1.5;
@@ -170,7 +244,21 @@ const STYLES = `
   border: 1px solid var(--sankofa-pulse-border); border-radius: 6px;
   cursor: pointer; transition: all 80ms;
 }
-[${ROOT_ATTR}] .sankofa-pulse-scale-btn:hover { border-color: var(--sankofa-pulse-accent); }
+[${ROOT_ATTR}] .sankofa-pulse-scale-btn:hover {
+  /* Explicit transparent bg + accent border. Both are needed
+     because a host's 'button:hover { background, color }' rule has
+     0,2,1 specificity — same as ours — so we must redeclare every
+     bleed-prone property on hover, otherwise the host wins on
+     source-order tiebreak. */
+  background: transparent;
+  border-color: var(--sankofa-pulse-accent);
+  color: inherit;
+}
+[${ROOT_ATTR}] .sankofa-pulse-scale-btn:focus,
+[${ROOT_ATTR}] .sankofa-pulse-scale-btn:active {
+  background: transparent;
+  color: inherit;
+}
 [${ROOT_ATTR}] .sankofa-pulse-scale-btn[data-selected="true"] {
   background: var(--sankofa-pulse-accent); border-color: var(--sankofa-pulse-accent);
   color: #ffffff;
@@ -184,7 +272,16 @@ const STYLES = `
   border: 1px solid var(--sankofa-pulse-border); border-radius: 6px;
   cursor: pointer;
 }
-[${ROOT_ATTR}] .sankofa-pulse-option-btn:hover { border-color: var(--sankofa-pulse-accent); }
+[${ROOT_ATTR}] .sankofa-pulse-option-btn:hover {
+  background: transparent;
+  border-color: var(--sankofa-pulse-accent);
+  color: inherit;
+}
+[${ROOT_ATTR}] .sankofa-pulse-option-btn:focus,
+[${ROOT_ATTR}] .sankofa-pulse-option-btn:active {
+  background: transparent;
+  color: inherit;
+}
 [${ROOT_ATTR}] .sankofa-pulse-option-btn[data-selected="true"] {
   border-color: var(--sankofa-pulse-accent);
   background: rgba(244, 63, 94, 0.08);
@@ -407,6 +504,35 @@ const STYLES = `
   font-size: 11px; color: var(--sankofa-pulse-muted);
   min-height: 14px;
 }
+[${ROOT_ATTR}] .sankofa-pulse-attribution {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--sankofa-pulse-border);
+  background: transparent;
+  font-size: 10px;
+  color: var(--sankofa-pulse-muted);
+  letter-spacing: .02em;
+}
+[${ROOT_ATTR}] .sankofa-pulse-attribution a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+[${ROOT_ATTR}] .sankofa-pulse-attribution a:hover {
+  color: var(--sankofa-pulse-fg);
+}
+[${ROOT_ATTR}] .sankofa-pulse-attribution-icon {
+  /* Inline brand icon. Width/height matched to the attribution
+     line-height so the icon visually centers with the text. */
+  width: 12px; height: 12px;
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 2px;
+  object-fit: contain;
+  /* No filter — render the icon at its natural color so brand
+     identity is preserved on dark + light themes. */
+}
 `;
 
 export class SurveyRenderer {
@@ -499,6 +625,7 @@ export class SurveyRenderer {
     }
     this.root.appendChild(body);
     this.root.appendChild(this.renderFooter(q, snap, valueRef));
+    this.root.appendChild(renderAttribution());
   }
 
   private renderHeader(survey: Survey, idx: number, total: number): HTMLElement {
@@ -589,6 +716,7 @@ export class SurveyRenderer {
     header.appendChild(close);
     this.root.appendChild(header);
     this.root.appendChild(thanks);
+    this.root.appendChild(renderAttribution());
   }
 
   private async advance(q: SurveyQuestion, valueRef: { current: unknown }): Promise<void> {
@@ -629,6 +757,37 @@ export class SurveyRenderer {
       currentQuestionId: q.id,
     });
   }
+}
+
+// ── Attribution footer ─────────────────────────────────────────────
+//
+// Powered-by-Sankofa link rendered at the bottom of every survey
+// card. The attribution is part of the SDK render contract — if you
+// want to suppress it, use the white-label tier on the dashboard
+// (sets `theme.hide_attribution`, which the renderer reads to skip
+// this element). The DOM here is mirrored verbatim by the dashboard
+// preview so what an operator sees during theme editing matches what
+// respondents see in production.
+function renderAttribution(): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'sankofa-pulse-attribution';
+  const link = document.createElement('a');
+  link.href = 'https://sankofa.dev?utm_source=pulse_survey';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  const icon = document.createElement('img');
+  icon.className = 'sankofa-pulse-attribution-icon';
+  icon.src = BRAND_ICON_DATA_URL;
+  icon.alt = '';
+  icon.setAttribute('aria-hidden', 'true');
+  // Decoded eagerly so the image is on the wire before paint —
+  // otherwise the data URL still triggers a microtask delay that
+  // shows a broken-image flash on slower devices.
+  icon.decoding = 'sync';
+  link.appendChild(icon);
+  link.appendChild(document.createTextNode('Powered by Sankofa'));
+  wrap.appendChild(link);
+  return wrap;
 }
 
 // ── Per-kind input renderers ───────────────────────────────────────
@@ -1699,6 +1858,18 @@ function ensureStyles(): void {
  * Idempotent — calling applyTheme twice replaces prior overrides
  * cleanly (style block carries an id derived from the root).
  */
+// Closed allowlist mirrored from server/engine/ee/pulse/models_theme.go
+// validPositions. Adding a new entry here requires a matching CSS
+// selector in the STYLES block above; absent that, the renderer
+// silently falls back to bottom-right.
+const SUPPORTED_POSITIONS = new Set<string>([
+  'bottom-right',
+  'bottom-left',
+  'top-right',
+  'top-left',
+  'center',
+]);
+
 function applyTheme(root: HTMLElement, theme: SurveyTheme): void {
   const styleVarMap: Array<[string, string | undefined]> = [
     ['--sankofa-pulse-accent', theme.primary_color],
@@ -1717,6 +1888,12 @@ function applyTheme(root: HTMLElement, theme: SurveyTheme): void {
   }
   if (theme.dark_mode === 'light' || theme.dark_mode === 'dark') {
     root.setAttribute('data-sankofa-pulse-mode', theme.dark_mode);
+  }
+  // Position attribute drives the corner / centre selectors above.
+  // Allowlist mirrors validPositions in models_theme.go — anything
+  // outside it falls through to the default bottom-right.
+  if (theme.position && SUPPORTED_POSITIONS.has(theme.position)) {
+    root.setAttribute('data-sankofa-pulse-position', theme.position);
   }
   if (theme.custom_css && theme.custom_css.trim() !== '') {
     // Append the operator's CSS as a sibling <style>. We don't
