@@ -162,7 +162,13 @@ const STYLES = `
  */
 [${ROOT_ATTR}][data-sankofa-pulse-inline="true"] {
   position: relative;
-  bottom: auto; right: auto;
+  /* Reset every edge anchor + transform — the position-preset
+     rules above (top-right, bottom-left, center, …) match at the
+     same 0,2,0 specificity as this rule, so without explicit
+     resets here the inline card inherits whatever corner the
+     theme picked and ends up docked instead of centered. */
+  top: auto; right: auto; bottom: auto; left: auto;
+  transform: none;
   /* Even in inline / hosted-page mode the survey is always a real
      card — it never stretches to fill its parent. */
   width: min(420px, 100%);
