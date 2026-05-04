@@ -115,34 +115,40 @@ function evalScreen(
   ctx: EligibilityContext,
 ): [boolean, string] {
   const screen = ctx.screenName ?? '';
-  const value = rule.screen_name ?? '';
   if (screen === '') return [false, 'screen unknown'];
-  switch (rule.screen_match) {
+  const targets = (rule.screen_names ?? []).filter((t) => t !== '');
+  if (targets.length === 0) return [false, 'screen rule has no targets'];
+  for (const target of targets) {
+    if (matchScreen(screen, target, rule.screen_match)) {
+      return [true, ''];
+    }
+  }
+  return [false, 'screen does not match any target'];
+}
+
+function matchScreen(
+  screen: string,
+  target: string,
+  op: MatchOp | undefined,
+): boolean {
+  switch (op) {
     case 'equals':
-      return screen === value
-        ? [true, '']
-        : [false, 'screen not equal to target'];
+      return screen === target;
     case 'contains':
-      return screen.includes(value)
-        ? [true, '']
-        : [false, 'screen does not contain target'];
+      return screen.includes(target);
     case 'prefix':
-      return screen.startsWith(value)
-        ? [true, '']
-        : [false, 'screen does not start with target'];
+      return screen.startsWith(target);
     case 'regex': {
       let re: RegExp;
       try {
-        re = new RegExp(value);
+        re = new RegExp(target);
       } catch {
-        return [false, 'screen regex did not compile'];
+        return false;
       }
-      return re.test(screen)
-        ? [true, '']
-        : [false, 'screen does not match regex'];
+      return re.test(screen);
     }
   }
-  return [false, 'screen_match unknown'];
+  return false;
 }
 
 // ── Event ──────────────────────────────────────────────────────────

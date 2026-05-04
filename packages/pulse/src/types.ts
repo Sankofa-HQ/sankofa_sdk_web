@@ -119,9 +119,11 @@ export interface TargetingRule {
   // url
   url_match?: MatchOp;
   url_value?: string;
-  // screen — same shape as url, applied to native screen / route name
+  // screen — same shape as url, applied to native screen / route
+  // name. screen_names is an OR-set: rule passes if the SDK's
+  // current screen matches the comparator against ANY entry.
   screen_match?: MatchOp;
-  screen_name?: string;
+  screen_names?: string[];
   // event
   event_name?: string;
   event_min_count?: number;
