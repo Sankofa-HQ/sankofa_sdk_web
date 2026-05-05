@@ -319,7 +319,7 @@ export interface PulseShowOptions {
 
 export interface SankofaPulseAPI {
   /** Fetch + filter active surveys the current respondent matches. */
-  getActiveMatchingSurveys(): Promise<Survey[]>;
+  getActiveMatchingSurveys(options?: PulseShowOptions): Promise<Survey[]>;
   /** Programmatic show — eligibility runs unless skipEligibility is set. */
   show(surveyId: string, options?: PulseShowOptions): Promise<void>;
   /** Dismiss any open survey. No-op when nothing is showing. */

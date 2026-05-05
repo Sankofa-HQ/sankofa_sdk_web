@@ -20,7 +20,7 @@ import type {
   SankofaPluginContext,
 } from '@sankofa/browser';
 
-import { PulseClient } from './client';
+import { PulseClient, type PulseSurveySummary } from './client';
 import { SurveyRenderer } from './renderer';
 import { evaluate as evaluateTargeting } from './targeting';
 import type {
@@ -61,7 +61,19 @@ export interface PulsePluginOptions {
    * surveys won't fire until the host wires this).
    */
   defaultFlagValues?: Record<string, unknown>;
+  /**
+   * Host-side kill-switch for the auto-show pump. Per-survey
+   * `auto_show` is the primary control — operators flip it from
+   * the dashboard, the SDK respects it without a re-deploy. This
+   * option is a hard "never auto-show ANYTHING in this host"
+   * override, useful when the host wants to gate auto-show behind
+   * its own consent / onboarding flow. Default: undefined (per-
+   * survey settings drive behaviour).
+   */
+  autoShow?: boolean;
 }
+
+const DISMISS_STORAGE_PREFIX = 'sankofa.pulse.dismissed.';
 
 class PulseImpl implements SankofaPulseAPI {
   private client: PulseClient;
@@ -70,6 +82,11 @@ class PulseImpl implements SankofaPulseAPI {
   private opts: PulsePluginOptions;
   private listeners: Map<PulseEvent, Set<PulseEventListener>> = new Map();
   private active: SurveyRenderer | null = null;
+  /** Most-recent survey summaries by id, populated by
+   *  getActiveMatchingSurveys. The auto-show pump reads per-survey
+   *  display fields (auto_show, cooldown, delay) from this map so
+   *  dashboard edits propagate without re-fetching every tick. */
+  private lastSummariesById: Map<string, PulseSurveySummary> = new Map();
 
   constructor(
     client: PulseClient,
@@ -81,6 +98,62 @@ class PulseImpl implements SankofaPulseAPI {
     this.snapshotFn = snapshotFn;
     this.debugFn = debugFn;
     this.opts = opts;
+  }
+
+  // ── Auto-show pump accessors ─────────────────────────────────────
+  // The pump (defined in pulsePlugin().setup) needs a few inputs
+  // from the plugin singleton: whether a survey is already on screen,
+  // the current respondent id (for keyed dismiss storage), and the
+  // configured cooldown. Exposing these as small read-only methods
+  // keeps the pump separate from the api.ts surface (no public
+  // export pollution) while avoiding tighter coupling via direct
+  // field access.
+
+  /** True when a survey modal is currently visible. */
+  isActive(): boolean {
+    return this.active !== null;
+  }
+
+  /** Best-effort respondent identifier — uses the current
+   *  anonymousId from the host. Empty string if the SDK boot hasn't
+   *  produced one yet (in which case the pump skips this tick). */
+  respondentExternalId(): string {
+    return this.snapshotFn().anonymousId ?? '';
+  }
+
+  /** Per-survey auto-show flag (dashboard-controlled). The pump
+   *  uses this to skip surveys the operator wants to keep
+   *  manual-only (e.g. a "Report a bug" form launched from a menu
+   *  item). Defaults to true for older engines that don't yet ship
+   *  this field. */
+  surveyIsAutoShow(surveyId: string): boolean {
+    const s = this.lastSummariesById.get(surveyId);
+    if (!s) return true;
+    if (typeof s.auto_show === 'boolean') return s.auto_show;
+    return true;
+  }
+
+  /** Resolve a survey's per-id dismiss cooldown in ms. The dashboard
+   *  publishes `display_cooldown_seconds` per survey on the list
+   *  endpoint; the pump reads it via this accessor so the cooldown
+   *  is the operator's choice, not a host config. Falls back to the
+   *  legacy 7-day default for older engines that don't yet ship the
+   *  field. */
+  surveyDismissCooldownMs(surveyId: string): number {
+    const s = this.lastSummariesById.get(surveyId);
+    if (s && typeof s.display_cooldown_seconds === 'number') {
+      return Math.max(0, s.display_cooldown_seconds * 1000);
+    }
+    return 7 * 24 * 60 * 60 * 1000;
+  }
+
+  /** Per-survey delay (ms) the pump waits after the trigger before
+   *  presenting. Dashboard-controlled. 0 = immediate. */
+  surveyDisplayDelayMs(surveyId: string): number {
+    const s = this.lastSummariesById.get(surveyId);
+    return s && typeof s.display_delay_ms === 'number'
+      ? Math.max(0, s.display_delay_ms)
+      : 0;
   }
 
   on(event: PulseEvent, listener: PulseEventListener): () => void {
@@ -108,17 +181,69 @@ class PulseImpl implements SankofaPulseAPI {
   }
 
   /**
-   * Best-effort survey discovery. The dashboard-style "list every
-   * survey" endpoint is JWT-only; the SDK currently relies on the
-   * host knowing which survey ID to show. This stub returns []
-   * until we land an SDK-readable list endpoint with eligibility
-   * pre-filtering on the server.
+   * List every published survey the API key's project owns AND
+   * whose targeting rules pass for the current respondent. Two
+   * stages:
+   *
+   *   1. Server returns every published survey + its targeting
+   *      rules (cheap projection — name, kind, rules; no questions).
+   *   2. SDK runs the local targeting evaluator against each rule
+   *      set using the same context the renderer would use.
+   *
+   * Splitting client/server eligibility this way lets the host UI
+   * react instantly (no per-survey round-trip) while still keeping
+   * sampling + frequency-cap math deterministic — both sides run
+   * identical evaluators (mirrored from server/engine/ee/pulse/
+   * targeting/evaluator.go).
+   *
+   * Returns the eligible Survey records as the caller would see in
+   * a single bundle fetch. Network errors throw; an empty list
+   * is a normal "no eligible surveys right now" result.
    */
-  async getActiveMatchingSurveys(): Promise<Survey[]> {
-    this.debugFn(
-      'getActiveMatchingSurveys: no SDK-readable list endpoint yet — host should pass surveyId to show() directly',
-    );
-    return [];
+  async getActiveMatchingSurveys(
+    options: PulseShowOptions = {},
+  ): Promise<Survey[]> {
+    let summaries: PulseSurveySummary[];
+    try {
+      summaries = await this.client.listSurveys();
+    } catch (err) {
+      this.debugFn('getActiveMatchingSurveys: list failed', err);
+      throw err;
+    }
+    // Refresh the per-survey lookup so the auto-show pump reads
+    // current dashboard-controlled display fields without an
+    // explicit re-fetch.
+    this.lastSummariesById.clear();
+    for (const s of summaries) this.lastSummariesById.set(s.id, s);
+
+    const snap = this.snapshotFn();
+    const externalId = options.respondent?.external_id ?? snap.anonymousId;
+    const out: Survey[] = [];
+    for (const s of summaries) {
+      const decision = evaluateTargeting(
+        s.targeting_rules,
+        this.buildContext(s.id, externalId ?? '', options),
+      );
+      if (!decision.eligible) {
+        this.debugFn(
+          `getActiveMatchingSurveys: ${s.id} ineligible (${decision.reason})`,
+        );
+        continue;
+      }
+      // Cast to Survey — list summary is a strict subset of the
+      // full Survey shape. Callers that need fields beyond what's
+      // listed (questions, theme, branching) should call show() or
+      // loadSurvey() per id.
+      out.push({
+        id: s.id,
+        name: s.name,
+        description: s.description ?? '',
+        kind: s.kind,
+        status: s.status,
+        slug: s.slug,
+      } as Survey);
+    }
+    return out;
   }
 
   async show(surveyId: string, options: PulseShowOptions = {}): Promise<void> {
@@ -266,20 +391,200 @@ export function pulsePlugin(options: PulsePluginOptions = {}): SankofaPlugin {
         context.debug(`[pulse] ${msg}`, ...rest);
       const client = new PulseClient({ endpoint, apiKey: snap.apiKey });
       singleton = new PulseImpl(client, () => context.getSnapshot(), debug, options);
+
+      // Auto-show pump: in production hosts the operator expects a
+      // newly-published survey to "just appear" — they shouldn't
+      // have to wire show() per route. We start a pump that calls
+      // getActiveMatchingSurveys + show() once at boot, then again
+      // on every SPA navigation (popstate + history pushState/
+      // replaceState patches). Default ON; opt out via
+      // pulsePlugin({ autoShow: false }).
+      const pump =
+        options.autoShow !== false && typeof window !== 'undefined'
+          ? startAutoShowPump(singleton, debug)
+          : null;
       return {
         async shutdown() {
+          pump?.stop();
           singleton?.dismiss();
           singleton = null;
         },
         onDistinctIdChange() {
           // Identity flipped — dismiss any in-flight survey so the
           // submit picks up the new identity. The host can re-show
-          // when ready.
+          // when ready. Re-evaluate auto-show under the new id.
           singleton?.dismiss();
+          pump?.tick();
         },
       };
     },
   };
+}
+
+/** Auto-show pump handle. Holding a reference lets the plugin's
+ *  shutdown hook detach the navigation listeners — important in
+ *  hot-reload + test environments where multiple plugin instances
+ *  would otherwise stack listeners on `window`. */
+interface AutoShowPump {
+  /** Manually re-evaluate (e.g. after identify()). */
+  tick(): void;
+  /** Detach listeners + cancel any pending tick. */
+  stop(): void;
+}
+
+function startAutoShowPump(
+  pulse: PulseImpl,
+  debug: (msg: string, ...rest: unknown[]) => void,
+): AutoShowPump {
+  let stopped = false;
+  let pending: number | null = null;
+
+  // Run on the next microtask so the host's init() resolves before
+  // we make any network calls — keeps the boot waterfall predictable.
+  const schedule = () => {
+    if (stopped) return;
+    if (pending !== null) return;
+    pending = window.setTimeout(() => {
+      pending = null;
+      void runOnce();
+    }, 0);
+  };
+
+  const runOnce = async () => {
+    if (stopped) return;
+    try {
+      const surveys = await pulse.getActiveMatchingSurveys();
+      if (stopped || surveys.length === 0) return;
+      const respondentId = pulse.respondentExternalId();
+      // Per-survey auto_show is the dashboard-controlled gate. The
+      // pump skips surveys flagged auto_show: false even if they
+      // pass targeting — those are explicit `show(id)` only.
+      const candidate = surveys.find((s) => {
+        if (!pulse.surveyIsAutoShow(s.id)) return false;
+        const cooldownMs = pulse.surveyDismissCooldownMs(s.id);
+        return !isRecentlyDismissed(s.id, respondentId, cooldownMs);
+      });
+      if (!candidate) {
+        debug('autoShow: nothing eligible this tick');
+        return;
+      }
+      // Race-guard: if another show is in-flight (the pump can fire
+      // twice quickly during a fast SPA route swap), skip rather
+      // than stack modals. PulseImpl already guards internally; this
+      // is just a clearer log.
+      if (pulse.isActive()) return;
+      const delay = pulse.surveyDisplayDelayMs(candidate.id);
+      if (delay > 0) {
+        debug(`autoShow: deferring ${candidate.id} by ${delay}ms`);
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+        if (stopped || pulse.isActive()) return;
+      }
+      debug(`autoShow: presenting ${candidate.id}`);
+      await pulse.show(candidate.id);
+    } catch (err) {
+      debug('autoShow tick failed', err);
+    }
+  };
+
+  // SPA navigation: history API doesn't fire popstate on
+  // pushState/replaceState, so monkey-patch them. Restore on stop()
+  // so a second plugin instance (HMR, test) doesn't double-wrap.
+  // Typed loosely because history's signature uses optional + nullable
+  // strings that don't fit the standard generic-function shape.
+  type HistoryFn = typeof window.history.pushState;
+  const origPush: HistoryFn = window.history.pushState.bind(window.history);
+  const origReplace: HistoryFn = window.history.replaceState.bind(window.history);
+  window.history.pushState = function patchedPush(...args: Parameters<HistoryFn>) {
+    origPush(...args);
+    schedule();
+  };
+  window.history.replaceState = function patchedReplace(...args: Parameters<HistoryFn>) {
+    origReplace(...args);
+    schedule();
+  };
+  const onPopState = () => schedule();
+  window.addEventListener('popstate', onPopState);
+
+  // Initial fire — covers hard-refresh + first paint.
+  schedule();
+
+  // The "shown" event also clears any stale dismiss entries for the
+  // same survey id; the "dismissed" / "completed" events stamp the
+  // dismiss store so the user isn't re-prompted on the next nav.
+  const offShown = pulse.on('survey_shown', (payload) => {
+    clearDismiss(payload.survey_id, pulse.respondentExternalId());
+  });
+  const offDismissed = pulse.on('survey_dismissed', (payload) => {
+    stampDismiss(payload.survey_id, pulse.respondentExternalId());
+  });
+  const offCompleted = pulse.on('survey_completed', (payload) => {
+    stampDismiss(payload.survey_id, pulse.respondentExternalId());
+  });
+
+  return {
+    tick: schedule,
+    stop() {
+      stopped = true;
+      if (pending !== null) {
+        window.clearTimeout(pending);
+        pending = null;
+      }
+      window.history.pushState = origPush;
+      window.history.replaceState = origReplace;
+      window.removeEventListener('popstate', onPopState);
+      offShown();
+      offDismissed();
+      offCompleted();
+    },
+  };
+}
+
+// ── localStorage dismiss store ───────────────────────────────────────
+//
+// Keyed per (respondent, survey) so two users sharing a browser don't
+// suppress each other. The cooldown is configurable per plugin
+// instance; default is 7 days.
+
+function dismissKey(surveyId: string, respondentId: string): string {
+  return `${DISMISS_STORAGE_PREFIX}${respondentId}.${surveyId}`;
+}
+
+function isRecentlyDismissed(
+  surveyId: string,
+  respondentId: string,
+  cooldownMs: number,
+): boolean {
+  if (cooldownMs <= 0) return false;
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(dismissKey(surveyId, respondentId));
+    if (!raw) return false;
+    const ts = Number(raw);
+    if (!Number.isFinite(ts)) return false;
+    return Date.now() - ts < cooldownMs;
+  } catch {
+    return false;
+  }
+}
+
+function stampDismiss(surveyId: string, respondentId: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(dismissKey(surveyId, respondentId), String(Date.now()));
+  } catch {
+    // Quota / private mode — silently swallow. Worst case the
+    // user sees the survey again on next nav; the server-side
+    // frequency_cap rule still gates real responses.
+  }
+}
+
+function clearDismiss(surveyId: string, respondentId: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(dismissKey(surveyId, respondentId));
+  } catch {
+    // ignore
+  }
 }
 
 /** Host-side accessor. null when pulsePlugin() wasn't passed to init(). */
