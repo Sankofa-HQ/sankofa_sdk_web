@@ -18,6 +18,7 @@ export type {
   SankofaTrackPayload,
   SankofaTransportValue,
 } from "./types";
+export type { TransportStatus, TransportFailureKind, TransportListener } from "./queue";
 export {
   SANKOFA_BROWSER_VERSION,
   resolveBatchUrl,
@@ -58,6 +59,12 @@ export const Sankofa = {
   },
   getSnapshot() {
     return client.getSnapshot();
+  },
+  getTransportStatus() {
+    return client.getTransportStatus();
+  },
+  onTransportStatus(listener: import("./queue").TransportListener) {
+    return client.onTransportStatus(listener);
   },
 };
 

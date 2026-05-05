@@ -3,7 +3,11 @@ import { SankofaAutocapture } from "./autocapture";
 import { SankofaIdentity } from "./identity";
 import { SankofaLifecycleObserver } from "./lifecycle";
 import { SankofaPluginManager } from "./plugins";
-import { SankofaQueueManager } from "./queue";
+import {
+  SankofaQueueManager,
+  type TransportListener,
+  type TransportStatus,
+} from "./queue";
 import { SankofaSessionManager } from "./session";
 import type {
   SankofaAutocaptureOptions,
@@ -346,6 +350,16 @@ export class SankofaBrowserClient {
       libVersion: SANKOFA_BROWSER_VERSION,
       projectNamespace: this.props.storagePrefix,
     };
+  }
+
+  getTransportStatus(): TransportStatus | null {
+    if (!this._isInitialized) return null;
+    return this.queue.getStatus();
+  }
+
+  onTransportStatus(listener: TransportListener): () => void {
+    if (!this._isInitialized) return () => {};
+    return this.queue.onStatusChange(listener);
   }
 
   touchSession(source = "activity"): SankofaClientSnapshot {
