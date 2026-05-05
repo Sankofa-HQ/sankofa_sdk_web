@@ -230,8 +230,10 @@ export class SankofaBrowserClient {
     await this.queue.enqueue({ type: "track", payload });
     this.debug(`📝 Tracked: ${eventName}`);
 
-    // Check for High Fidelity Triggers
-    if (this.replayConfig && this.replayConfig.high_fidelity_triggers.includes(eventName)) {
+    // Check for High Fidelity Triggers. The handshake may omit
+    // `high_fidelity_triggers` entirely (older servers, replay disabled),
+    // so optional-chain through both fields rather than asserting shape.
+    if (this.replayConfig?.high_fidelity_triggers?.includes(eventName)) {
         this.debug(`🚀 High Fidelity Trigger fired: ${eventName}`);
         void this.plugins.notifyHighFidelity();
     }
