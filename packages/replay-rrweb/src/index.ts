@@ -55,6 +55,21 @@ interface HeatmapInteractionEvent {
      * Mirrors the same algorithm in dashboard/ee/components/heatmaps/web/stableSelector.ts.
      */
     selector?: string;
+    /**
+     * Document dimensions sampled at click time.  The chunk-level
+     * device_context.{document_width,document_height} only reflects the
+     * page size at flush time — for dynamic pages (lazy images, modals,
+     * infinite scroll) the natural page can grow significantly between
+     * the click and the flush, which would shift the click's normalized
+     * Y away from the element it actually hit.  Capturing per-event
+     * lets the worker normalize each click against the page as it
+     * existed when the user clicked.
+     *
+     * Names are abbreviated (`dw` / `dh`) to keep the per-event payload
+     * tight — at 20 samples/sec for pointermove these add up.
+     */
+    dw?: number;
+    dh?: number;
   };
   timestamp: number;
   screen?: string;
@@ -228,6 +243,32 @@ export function rrwebReplayPlugin(
       let lastClickY = -9999;
       const pointerListeners: Array<{ type: string; fn: (e: Event) => void }> = [];
 
+      // Sampled at click/move time so the worker can normalize against the
+      // page as it existed at the moment of the gesture rather than at
+      // chunk-flush time.  Cheap (a few DOM property reads) but we still
+      // skip it for moves — at 20 samples/sec the cost would dominate.
+      const measureDocSize = (): { dw: number; dh: number } | null => {
+        if (typeof document === "undefined") return null;
+        const docEl = document.documentElement;
+        const body = document.body;
+        const dw = Math.max(
+          docEl?.scrollWidth ?? 0,
+          docEl?.offsetWidth ?? 0,
+          body?.scrollWidth ?? 0,
+          body?.offsetWidth ?? 0,
+          window.innerWidth || 0,
+        );
+        const dh = Math.max(
+          docEl?.scrollHeight ?? 0,
+          docEl?.offsetHeight ?? 0,
+          body?.scrollHeight ?? 0,
+          body?.offsetHeight ?? 0,
+          window.innerHeight || 0,
+        );
+        if (dw <= 0 || dh <= 0) return null;
+        return { dw, dh };
+      };
+
       const pushHeatmapEvent = (
         clientX: number,
         clientY: number,
@@ -265,6 +306,9 @@ export function rrwebReplayPlugin(
         // dominate the budget at 20 samples/sec).
         const selector =
           type === TAP_TYPE_MOVE ? undefined : stableSelectorFor(target);
+        // Sample document size on click/up but skip moves — selector
+        // attribution and per-event doc-size are both click-only signals.
+        const docSize = type === TAP_TYPE_MOVE ? null : measureDocSize();
         const evt: HeatmapInteractionEvent = {
           type: RRWEB_INCREMENTAL_SNAPSHOT,
           data: {
@@ -274,6 +318,7 @@ export function rrwebReplayPlugin(
             x: clientX,
             y: clientY,
             ...(selector ? { selector } : {}),
+            ...(docSize ? { dw: docSize.dw, dh: docSize.dh } : {}),
           },
           timestamp: Date.now(),
           // Tag with the current screen so the worker can attribute the
@@ -318,6 +363,7 @@ export function rrwebReplayPlugin(
                 x: clientX,
                 y: clientY,
                 ...(selector ? { selector } : {}),
+                ...(docSize ? { dw: docSize.dw, dh: docSize.dh } : {}),
               },
               timestamp: now,
               screen: fresh.currentScreen,
