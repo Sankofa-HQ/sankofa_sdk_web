@@ -1,4 +1,5 @@
 import type { SankofaPlugin, SankofaPluginContext, SankofaClientSnapshot } from "@sankofa/browser";
+import { registerModuleAPI, unregisterModuleAPI } from "@sankofa/browser";
 import { SwitchCache } from "./cache";
 import { ExposureTracker } from "./exposures";
 import type {
@@ -225,6 +226,11 @@ export function switchPlugin(options: SwitchPluginOptions = {}): SankofaPlugin {
         options.staleMaxMs,
       );
 
+      // Cross-module registry — @sankofa/catch reads from here when
+      // composing flag_snapshot on every captured event. Done at setup
+      // time so even the very first crash carries the bundled defaults.
+      registerModuleAPI("switch", singleton);
+
       // Exposure tracking closes the V1 caveat where flag_evaluations
       // was server-written on every handshake regardless of whether the
       // app actually read the flag. With exposures the experiment
@@ -253,6 +259,7 @@ export function switchPlugin(options: SwitchPluginOptions = {}): SankofaPlugin {
         },
         async shutdown() {
           await singleton?.getExposureTracker()?.shutdown();
+          unregisterModuleAPI("switch");
           singleton = null;
         },
       };

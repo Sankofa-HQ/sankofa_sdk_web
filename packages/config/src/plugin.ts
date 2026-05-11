@@ -1,4 +1,5 @@
 import type { SankofaPlugin, SankofaPluginContext } from "@sankofa/browser";
+import { registerModuleAPI, unregisterModuleAPI } from "@sankofa/browser";
 import { ConfigCache } from "./cache";
 import type {
   ConfigChangeListener,
@@ -145,11 +146,17 @@ export function configPlugin(options: ConfigPluginOptions = {}): SankofaPlugin {
         debug,
         options.staleMaxMs,
       );
+
+      // Cross-module registry — @sankofa/catch reads from here when
+      // composing config_snapshot on every captured event.
+      registerModuleAPI("config", singleton);
+
       return {
         applyHandshake(cfg) {
           singleton?.applyHandshake(cfg);
         },
         shutdown() {
+          unregisterModuleAPI("config");
           singleton = null;
         },
       };

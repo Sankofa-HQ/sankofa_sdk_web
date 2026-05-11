@@ -1,4 +1,5 @@
 import type { SankofaPlugin, SankofaPluginContext } from '@sankofa/browser';
+import { getModuleAPI, registerModuleAPI, unregisterModuleAPI } from '@sankofa/browser';
 
 import { BreadcrumbsAutocapture, BreadcrumbsBuffer } from './breadcrumbs';
 import { SankofaCatchClient } from './client';
@@ -7,6 +8,18 @@ import { Transport } from './transport';
 import { PerfTransport } from './perf-transport';
 import { WebVitals, emitNavigationTransaction, type PerfSink } from './perf';
 import type { CatchHandshakeConfig, SankofaCatchAPI } from './types';
+
+// Duck-typed shape of what @sankofa/switch + @sankofa/config publish
+// via `registerModuleAPI`. Defined inline so this file doesn't have to
+// take a build-time dependency on either package — the registry's
+// contract is the only thing that matters at the call site.
+interface FlagAPILike {
+  getAllKeys(): string[];
+  getDecision(key: string): { value: boolean; variant?: string } | null;
+}
+interface ConfigAPILike {
+  getAll(): Record<string, unknown>;
+}
 
 /**
  * Module-scoped singleton returned from getCatch(). Matches the
@@ -162,15 +175,22 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
               }
             }
           : undefined,
-        // Cross-product snapshots — host-app-supplied. When the host
-        // wires them up, every error carries the flag + config state
-        // at capture time so dashboards can show "what was on when
-        // this broke".
-        readFlagSnapshot: options.readFlagSnapshot,
-        readConfigSnapshot: options.readConfigSnapshot,
+        // Cross-product snapshots. When the host passes explicit
+        // `readFlagSnapshot` / `readConfigSnapshot` we honor those (no
+        // surprises for code already wired up). Otherwise we look the
+        // Switch + Config singletons up from the cross-module registry
+        // — set there by `switchPlugin()` / `configPlugin()` setup —
+        // so every error carries the flag + config state at capture
+        // time without any host glue.
+        readFlagSnapshot: options.readFlagSnapshot ?? autoFlagSnapshot,
+        readConfigSnapshot: options.readConfigSnapshot ?? autoConfigSnapshot,
       });
 
       singleton = client;
+      // Expose the client via the registry so `Sankofa.captureException`
+      // and friends (defined in @sankofa/browser) can find it without
+      // a hard import of @sankofa/catch.
+      registerModuleAPI('catch', client);
 
       if (options.autocapture !== false) {
         autocapture.install();
@@ -245,6 +265,7 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
           transport.shutdown();
           webVitals?.stop();
           perfTransport?.shutdown();
+          unregisterModuleAPI('catch');
           singleton = null;
         },
       };
@@ -260,5 +281,35 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
  */
 export function getCatch(): SankofaCatchAPI | null {
   return singleton;
+}
+
+// ── Auto-discovery (Switch + Config snapshots) ──────────────────────
+//
+// Default closures handed to the catch client when the host didn't pass
+// explicit `readFlagSnapshot` / `readConfigSnapshot`. They look the
+// sibling modules up from the cross-module registry — populated by
+// `switchPlugin()` / `configPlugin()` setup — so a forgotten options
+// wire-up doesn't silently drop flag + config context from every event.
+
+function autoFlagSnapshot(): Record<string, string> | undefined {
+  const switchApi = getModuleAPI<FlagAPILike>('switch');
+  if (!switchApi) return undefined;
+  const out: Record<string, string> = {};
+  for (const k of switchApi.getAllKeys()) {
+    const d = switchApi.getDecision(k);
+    if (!d) continue;
+    // Variants render as the variant key; pure boolean flags render
+    // as "true"/"false" so the dashboard can group on the value
+    // without re-resolving.
+    out[k] = d.variant && d.variant.length > 0 ? d.variant : String(d.value);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function autoConfigSnapshot(): Record<string, unknown> | undefined {
+  const configApi = getModuleAPI<ConfigAPILike>('config');
+  if (!configApi) return undefined;
+  const all = configApi.getAll();
+  return Object.keys(all).length > 0 ? all : undefined;
 }
 

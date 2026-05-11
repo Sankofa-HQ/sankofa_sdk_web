@@ -117,8 +117,21 @@ export class SankofaCatchClient implements SankofaCatchAPI {
     this.buffer.push(crumb);
   }
 
+  log(message: string, category?: string): void {
+    this.buffer.push({
+      type: 'log',
+      category: category ?? 'log',
+      message,
+      level: 'info',
+    });
+  }
+
   setUser(user: UserContext | null): void {
     this.user = user;
+  }
+
+  setTag(key: string, value: string): void {
+    this.tags = { ...this.tags, [key]: value };
   }
 
   setTags(tags: Record<string, string>): void {

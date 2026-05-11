@@ -252,8 +252,16 @@ export interface SankofaCatchAPI {
   captureMessage(message: string, options?: CaptureOptions): string;
   /** Add a breadcrumb to the ring buffer. */
   addBreadcrumb(crumb: Omit<Breadcrumb, 'ts_ms'> & { ts_ms?: number }): void;
+  /**
+   * Crashlytics-style breadcrumb log. Drops a free-text trail entry
+   * onto the ring buffer that rides on the next captured event.
+   * Doesn't bill — no event is emitted unless something else captures.
+   */
+  log(message: string, category?: string): void;
   /** Merge user context into every subsequent event. */
   setUser(user: UserContext | null): void;
+  /** Set a single tag — convenience over `setTags`. */
+  setTag(key: string, value: string): void;
   /** Merge tags into every subsequent event. */
   setTags(tags: Record<string, string>): void;
   /** Attach extra context to every subsequent event. */
