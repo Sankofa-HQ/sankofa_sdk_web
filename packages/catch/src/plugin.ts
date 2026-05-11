@@ -7,7 +7,7 @@ import { installGlobalHandlers, type InstalledHandlers } from './handlers';
 import { Transport } from './transport';
 import { PerfTransport } from './perf-transport';
 import { WebVitals, emitNavigationTransaction, type PerfSink } from './perf';
-import type { CatchHandshakeConfig, SankofaCatchAPI } from './types';
+import type { BeforeSendFn, CatchHandshakeConfig, SankofaCatchAPI } from './types';
 
 // Duck-typed shape of what @sankofa/switch + @sankofa/config publish
 // via `registerModuleAPI`. Defined inline so this file doesn't have to
@@ -111,6 +111,23 @@ export interface CatchPluginOptions {
    * timeline. Default true. Set to false in diagnostic-only builds.
    */
   capturePerformance?: boolean;
+
+  /**
+   * Synchronous hook called AFTER an event has been composed but
+   * BEFORE the transport sends it. Return the (possibly modified)
+   * event to ship it; return `null` to drop it entirely.
+   *
+   * Common use cases:
+   *   - PII scrubbing — strip emails / tokens from event payloads.
+   *   - Noise filtering — drop known-benign errors (ResizeObserver
+   *     loop limit, etc.) without paying for them in your Catch quota.
+   *   - Late tag enrichment — attach app state that wasn't available
+   *     at plugin init time.
+   *
+   * Throwing inside `beforeSend` is treated like returning the event
+   * unchanged — a host bug must never break the capture pipeline.
+   */
+  beforeSend?: BeforeSendFn;
 }
 
 /**
@@ -184,6 +201,7 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
         // time without any host glue.
         readFlagSnapshot: options.readFlagSnapshot ?? autoFlagSnapshot,
         readConfigSnapshot: options.readConfigSnapshot ?? autoConfigSnapshot,
+        beforeSend: options.beforeSend,
       });
 
       singleton = client;

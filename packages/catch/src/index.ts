@@ -1,6 +1,7 @@
 export { catchPlugin, getCatch } from './plugin';
 export type { CatchPluginOptions } from './plugin';
 export type {
+  BeforeSendFn,
   Breadcrumb,
   BreadcrumbType,
   CaptureOptions,
@@ -17,6 +18,7 @@ export type {
   Platform,
   RequestContext,
   SankofaCatchAPI,
+  SankofaCatchScope,
   SDKInfo,
   SpanStatus,
   SpanWire,
@@ -31,3 +33,4 @@ export type {
   WebVitalWire,
 } from './types';
 export { WireVersionCurrent } from './types';
+export { SankofaScope } from './scope';

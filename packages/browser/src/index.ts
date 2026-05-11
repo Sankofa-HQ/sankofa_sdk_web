@@ -7,6 +7,23 @@ import { getModuleAPI } from "./module-registry";
 // would create a cycle). The registry's contract is the only thing
 // that matters at the call site — if the host hasn't registered
 // catchPlugin, the registry returns null and every helper no-ops.
+/**
+ * Public scope handle handed to `Sankofa.withScope(fn)`. Mirrors
+ * `SankofaCatchScope` in @sankofa/catch — re-declared here so
+ * @sankofa/browser doesn't have to depend on @sankofa/catch (catch
+ * already depends on browser; the reverse would create a cycle).
+ *
+ * The duck-typed shape works because at runtime the registry hands
+ * back the same `SankofaScope` instance @sankofa/catch creates.
+ */
+export interface SankofaScope {
+  setTag(key: string, value: string): SankofaScope;
+  setTags(tags: Record<string, string>): SankofaScope;
+  setExtra(key: string, value: unknown): SankofaScope;
+  setUser(user: unknown): SankofaScope;
+  setLevel(level: string): SankofaScope;
+  setFingerprint(fingerprint: string[]): SankofaScope;
+}
 interface CatchAPILike {
   captureException(err: unknown, options?: unknown): string;
   captureMessage(message: string, options?: unknown): string;
@@ -16,6 +33,7 @@ interface CatchAPILike {
   setTag(key: string, value: string): void;
   setTags(tags: Record<string, string>): void;
   setExtra(key: string, value: unknown): void;
+  withScope<T>(fn: (scope: SankofaScope) => T): T;
   flush(): Promise<void>;
 }
 export { createPersistentQueue } from "./storage";
@@ -159,6 +177,40 @@ export const Sankofa = {
   addBreadcrumb(crumb: unknown): void {
     const c = getModuleAPI<CatchAPILike>("catch");
     c?.addBreadcrumb(crumb);
+  },
+
+  /**
+   * Run `fn` with a temporary scope. Mutations made via the scope
+   * (tags, extras, user, level, fingerprint) overlay onto any
+   * `captureException` / `captureMessage` calls inside `fn`. Outside
+   * `fn` the scope is gone — async captures deferred past `fn`'s
+   * return will NOT see the scope.
+   *
+   * No-op when catchPlugin isn't loaded — `fn` still runs so host
+   * code that does work alongside captures isn't skipped.
+   *
+   * ```ts
+   * Sankofa.withScope((scope) => {
+   *   scope.setTag('flow', 'checkout');
+   *   scope.setExtra('cart_id', cart.id);
+   *   Sankofa.captureException(err);
+   * });
+   * ```
+   */
+  withScope<T>(fn: (scope: SankofaScope) => T): T {
+    const c = getModuleAPI<CatchAPILike>("catch");
+    if (c) return c.withScope(fn);
+    // No-catch fallback: hand back a sink-style scope so host code
+    // doesn't have to guard the API.
+    const noop: SankofaScope = {
+      setTag: () => noop,
+      setTags: () => noop,
+      setExtra: () => noop,
+      setUser: () => noop,
+      setLevel: () => noop,
+      setFingerprint: () => noop,
+    };
+    return fn(noop);
   },
 
   /** Force-flush queued Catch events (e.g. before a known page unload). */

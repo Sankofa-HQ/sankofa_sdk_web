@@ -1,7 +1,9 @@
 import { BreadcrumbsAutocapture, BreadcrumbsBuffer } from './breadcrumbs';
+import { ScopeManager, type SankofaScope } from './scope';
 import { errorToException } from './stack-parser';
 import { Transport } from './transport';
 import type {
+  BeforeSendFn,
   Breadcrumb,
   CaptureOptions,
   CatchEvent,
@@ -9,6 +11,7 @@ import type {
   DeviceContext,
   Level,
   SankofaCatchAPI,
+  SankofaCatchScope,
   UserContext,
 } from './types';
 import { WireVersionCurrent } from './types';
@@ -48,6 +51,13 @@ export interface CatchClientOptions {
   readFlagSnapshot?: FlagSnapshotFn;
   /** Called to read the current config values at event capture time. */
   readConfigSnapshot?: ConfigSnapshotFn;
+  /**
+   * Synchronous hook fired AFTER event composition but BEFORE the
+   * transport sends. Return `null` to drop the event, return the
+   * (possibly modified) event to ship it. Throws are swallowed —
+   * a host hook can never block the capture pipeline.
+   */
+  beforeSend?: BeforeSendFn;
 }
 
 export class SankofaCatchClient implements SankofaCatchAPI {
@@ -62,6 +72,8 @@ export class SankofaCatchClient implements SankofaCatchAPI {
   private readonly triggerReplay?: ReplayTriggerFn;
   private readonly readFlagSnapshot?: FlagSnapshotFn;
   private readonly readConfigSnapshot?: ConfigSnapshotFn;
+  private readonly beforeSend?: BeforeSendFn;
+  private readonly scopeManager = new ScopeManager();
 
   // Scope — sticky context merged into every outgoing event.
   private user: UserContext | null = null;
@@ -85,6 +97,16 @@ export class SankofaCatchClient implements SankofaCatchAPI {
     this.triggerReplay = opts.triggerReplay;
     this.readFlagSnapshot = opts.readFlagSnapshot;
     this.readConfigSnapshot = opts.readConfigSnapshot;
+    this.beforeSend = opts.beforeSend;
+  }
+
+  /**
+   * Run `fn` with a fresh scope pushed onto the manager's stack. Any
+   * `captureException` / `captureMessage` calls inside `fn` see the
+   * scope merged in (between global state and caller `options`).
+   */
+  withScope<T>(fn: (scope: SankofaCatchScope) => T): T {
+    return this.scopeManager.withScope(fn);
   }
 
   applyHandshake(cfg: CatchHandshakeConfig | undefined): void {
@@ -173,12 +195,19 @@ export class SankofaCatchClient implements SankofaCatchAPI {
   private capture(
     errOrMessage: unknown,
     type: CatchEvent['type'],
-    options: CaptureOptions,
+    optionsIn: CaptureOptions,
     /* future-proofing hook */ sampled: boolean,
     mechanism: { mechanismType?: string; handled?: boolean } = {},
   ): string {
     if (!this.enabled) return '';
     if (!sampled || !this.shouldSample()) return '';
+
+    // Apply active withScope() overlay (if any). Layering order:
+    //   global setUser/setTags/setExtra (read below)
+    //   → scope (applyTo here)
+    //   → caller-supplied options (already merged in by applyTo)
+    const scope = this.scopeManager.current();
+    const options: CaptureOptions = scope ? scope.applyTo(optionsIn) : optionsIn;
 
     const isUnhandled = mechanism.handled === false;
     if (isUnhandled && this.triggerReplay) {
@@ -247,8 +276,25 @@ export class SankofaCatchClient implements SankofaCatchAPI {
       span_id: options.contexts?.trace?.span_id,
     };
 
-    this.transport.push(event);
-    return eventId;
+    // beforeSend hook — host gets final say. A null return drops the
+    // event; an exception is treated as "pass through unchanged"
+    // because losing telemetry from a buggy hook is worse than the
+    // hook misbehaving.
+    let outgoing: CatchEvent | null = event;
+    if (this.beforeSend) {
+      try {
+        outgoing = this.beforeSend(event);
+      } catch (err) {
+        this.debug('beforeSend threw — sending original event', err);
+        outgoing = event;
+      }
+    }
+    if (!outgoing) {
+      this.debug(`event ${event.event_id} dropped by beforeSend`);
+      return '';
+    }
+    this.transport.push(outgoing);
+    return outgoing.event_id;
   }
 
   private shouldSample(): boolean {

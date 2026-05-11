@@ -245,6 +245,35 @@ export interface CaptureOptions {
   };
 }
 
+/**
+ * Synchronous hook called after an event has been composed but BEFORE
+ * the transport sends it. Return the (possibly modified) event to
+ * pass it through, or `null` to drop it entirely.
+ *
+ * Use cases:
+ *   - PII scrubbing (e.g. strip `event.user.email`)
+ *   - Noise filtering (e.g. drop ResizeObserver errors)
+ *   - Tag enrichment from app state unavailable at SDK init
+ *
+ * Throwing inside `beforeSend` is treated like `return event` — the
+ * SDK never lets a host hook break the capture pipeline.
+ */
+export type BeforeSendFn = (event: CatchEvent) => CatchEvent | null;
+
+/**
+ * Scope handed to `Sankofa.withScope(fn)`. Implementations live in
+ * scope.ts but the API is declared here so it appears in the public
+ * type surface alongside `CaptureOptions`.
+ */
+export interface SankofaCatchScope {
+  setTag(key: string, value: string): SankofaCatchScope;
+  setTags(tags: Record<string, string>): SankofaCatchScope;
+  setExtra(key: string, value: unknown): SankofaCatchScope;
+  setUser(user: UserContext | null): SankofaCatchScope;
+  setLevel(level: Level): SankofaCatchScope;
+  setFingerprint(fingerprint: string[]): SankofaCatchScope;
+}
+
 export interface SankofaCatchAPI {
   /** Capture an Error instance. */
   captureException(err: unknown, options?: CaptureOptions): string;
@@ -266,6 +295,13 @@ export interface SankofaCatchAPI {
   setTags(tags: Record<string, string>): void;
   /** Attach extra context to every subsequent event. */
   setExtra(key: string, value: unknown): void;
+  /**
+   * Run `fn` with a temporary scope that overlays onto any
+   * `captureException` / `captureMessage` calls made inside it. The
+   * scope is popped when `fn` returns — async captures deferred past
+   * `fn`'s return will NOT see the scope.
+   */
+  withScope<T>(fn: (scope: SankofaCatchScope) => T): T;
   /** Force-flush the transport. Promise resolves when the batch is POSTed. */
   flush(): Promise<void>;
 }
