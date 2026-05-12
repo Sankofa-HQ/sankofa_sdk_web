@@ -306,6 +306,7 @@ class PulseImpl implements SankofaPulseAPI {
           survey_id: surveyId,
           respondent,
           context: this.buildSubmitContext(options),
+          screen: this.resolveScreen(options),
           answers,
         });
         this.emit({
@@ -342,10 +343,25 @@ class PulseImpl implements SankofaPulseAPI {
     options: PulseShowOptions,
   ): EligibilityContext {
     const ctx = options.context ?? {};
+    // Resolve the active screen for KindScreen targeting + for the
+    // event-triggered survey path: when a survey fires because of a
+    // Catch / analytics event, the screen the user is on at
+    // trigger-time is the one we want to match against.
+    const explicitScreen = (ctx as Record<string, unknown>).screenName;
+    const snap = this.snapshotFn();
+    const screenName =
+      typeof explicitScreen === 'string' && explicitScreen.length > 0
+        ? explicitScreen
+        : snap.currentScreen && snap.currentScreen !== 'Unknown'
+        ? snap.currentScreen
+        : typeof window !== 'undefined'
+        ? window.location.pathname
+        : undefined;
     return {
       surveyId,
       respondentExternalId: externalId,
       pageUrl: typeof window !== 'undefined' ? window.location.href : '',
+      screenName,
       userProperties: {
         ...(this.opts.defaultUserProperties ?? {}),
         ...(ctx.userProperties as Record<string, unknown> ?? {}),
@@ -374,6 +390,23 @@ class PulseImpl implements SankofaPulseAPI {
       };
     }
     return ctx;
+  }
+
+  /**
+   * Resolve the active screen at submit time. Precedence (per the
+   * cross-product screen-tagging contract): explicit
+   * `options.context.screenName` > host's tracked currentScreen >
+   * auto-detected `location.pathname`. Returning undefined leaves
+   * the wire field unset; the server preserves "unknown" rather
+   * than inventing a value.
+   */
+  private resolveScreen(options: PulseShowOptions): string | undefined {
+    const explicit = (options.context as Record<string, unknown> | undefined)?.screenName;
+    if (typeof explicit === 'string' && explicit.length > 0) return explicit;
+    const snap = this.snapshotFn();
+    if (snap.currentScreen && snap.currentScreen !== 'Unknown') return snap.currentScreen;
+    if (typeof window !== 'undefined' && window.location?.pathname) return window.location.pathname;
+    return undefined;
   }
 }
 

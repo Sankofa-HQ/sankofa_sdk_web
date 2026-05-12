@@ -30,6 +30,15 @@ type SnapshotFn = () => {
   anonymousId?: string;
   sessionId?: string;
   libVersion: string;
+  /**
+   * Active screen / route at capture time. Set by the host via
+   * `client.screen('Identify')` (web) or React Navigation auto-track
+   * (RN). When absent, the Catch client falls back to
+   * `window.location.pathname` so cross-product correlation with
+   * Heatmap / Replay / Pulse still works for hosts that haven't wired
+   * an explicit screen tracker yet.
+   */
+  currentScreen?: string;
 };
 
 type FlagSnapshotFn = () => Record<string, string> | undefined;
@@ -270,6 +279,8 @@ export class SankofaCatchClient implements SankofaCatchAPI {
       breadcrumbs: this.buffer.snapshot(),
       fingerprint: options.fingerprint,
 
+      screen: snap.currentScreen || autoDetectScreen(),
+
       flag_snapshot: this.readFlagSnapshot?.(),
       config_snapshot: this.readConfigSnapshot?.(),
       trace_id: options.contexts?.trace?.trace_id,
@@ -357,4 +368,16 @@ function randomId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function autoDetectScreen(): string | undefined {
+  // Fallback when the host hasn't called `client.screen(name)`. Prefers
+  // `location.pathname` over `document.title` because the path is
+  // stable and matches the convention Heatmap / Replay use to scope by
+  // screen. Returns undefined in non-browser contexts (e.g. node tests)
+  // so the wire field stays absent rather than carrying a misleading
+  // value.
+  if (typeof window === 'undefined' || !window.location) return undefined;
+  const path = window.location.pathname;
+  return path && path !== '' ? path : undefined;
 }

@@ -289,6 +289,15 @@ export interface SubmitPayload {
     email?: string;
   };
   context?: Record<string, unknown>;
+  /**
+   * Active screen / route at submission time. First-class field —
+   * the server stores it as a dedicated indexed column so dashboards
+   * can filter responses by screen and link out to Heatmap / Catch /
+   * Replay for that screen. Older SDKs that pack `screen` inside
+   * `context` keep working; the server prefers this field when both
+   * are present.
+   */
+  screen?: string;
   submitted_at?: string;
   answers: AnswerState;
 }

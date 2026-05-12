@@ -177,6 +177,7 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
             anonymousId: s.anonymousId,
             sessionId: s.sessionId,
             libVersion: s.libVersion,
+            currentScreen: s.currentScreen,
           };
         },
         environment: options.environment ?? 'live',

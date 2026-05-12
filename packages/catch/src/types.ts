@@ -196,6 +196,15 @@ export interface CatchEvent {
   breadcrumbs?: Breadcrumb[];
   fingerprint?: string[];
 
+  /**
+   * Active screen / route at capture time. First-class field shared
+   * with Heatmap, Replay, Pulse, and Plan for cross-product
+   * correlation. Set explicitly via `client.screen('Identify')`, or
+   * auto-detected from `location.pathname` when no explicit value is
+   * available.
+   */
+  screen?: string;
+
   flag_snapshot?: Record<string, string>;
   config_snapshot?: Record<string, unknown>;
   trace_id?: string;
