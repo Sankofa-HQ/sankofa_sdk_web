@@ -209,6 +209,10 @@ export class SankofaBrowserClient {
   async screen(screenName: string, properties: SankofaPropertyMap = {}): Promise<void> {
     this._currentScreen = screenName;
     this._isManualScreen = true;
+    // Canonical screen signal — fires regardless of which Sankofa
+    // products the host has enabled, so the lexicon + dwell + presence
+    // are always populated.
+    this.emitScreenSeen(screenName, properties);
     await this.track("$screen_view", { ...properties, $screen_name: screenName });
   }
 
@@ -223,11 +227,54 @@ export class SankofaBrowserClient {
     if (!this._isManualScreen) {
       this._currentScreen = window.location.pathname || "/";
     }
+    // Auto-detected screens still fire the canonical signal so the
+    // lexicon + dwell flow even for hosts that never call screen()
+    // manually.
+    this.emitScreenSeen(this._currentScreen, {
+      $auto_detected: true,
+      $pageview_source: source,
+    });
     await this.track("$pageview", {
       $pageview_source: source,
       $pathname: window.location.pathname,
       $current_url: window.location.href,
     });
+  }
+
+  /**
+   * Fire-and-forget POST to the canonical /api/v1/screens/seen
+   * endpoint. Idempotent server-side; failures are silent — screen
+   * tagging is decorative for cross-product correlation, never
+   * load-bearing for the analytics payload.
+   */
+  private emitScreenSeen(screenName: string, properties: SankofaPropertyMap): void {
+    if (!this._isInitialized) return;
+    if (!this.props.batchUrl || !this.props.apiKey) return;
+    if (!screenName) return;
+
+    const url = `${this.props.batchUrl.origin}/api/v1/screens/seen`;
+    const snap = this.getSnapshot();
+    const body = JSON.stringify({
+      screen: screenName,
+      distinct_id: snap.distinctId,
+      session_id: snap.sessionId,
+      ts_ms: Date.now(),
+      properties,
+    });
+    try {
+      void fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": this.props.apiKey,
+        },
+        body,
+        credentials: "omit",
+        keepalive: true,
+      });
+    } catch (err) {
+      this.debug("screens/seen failed", err);
+    }
   }
 
   async track(eventName: string, properties: SankofaPropertyMap = {}): Promise<void> {
