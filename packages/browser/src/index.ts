@@ -81,6 +81,17 @@ export const Sankofa = {
   track(eventName: string, properties?: import("./types").SankofaPropertyMap) {
     return client.track(eventName, properties);
   },
+  /**
+   * Tag the current view as a named screen. Drives heatmap attribution,
+   * dwell time, presence, and the dedicated stability-gated heatmap
+   * snapshot. SPAs should call this on every route change (the SDK's
+   * autocapture also fires it on `pushState`/`replaceState`, but
+   * calling it explicitly gives you a human-readable name instead
+   * of `window.location.pathname`).
+   */
+  screen(screenName: string, properties?: import("./types").SankofaPropertyMap) {
+    return client.screen(screenName, properties);
+  },
   identify(userId: string, traits?: import("./types").SankofaPropertyMap) {
     return client.identify(userId, traits);
   },
