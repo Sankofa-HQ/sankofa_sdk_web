@@ -1,5 +1,6 @@
 import { SankofaActivityObserver } from "./activity";
 import { SankofaAutocapture } from "./autocapture";
+import { HeatmapSnapshotter } from "./heatmap-snapshotter";
 import { SankofaIdentity } from "./identity";
 import { SankofaLifecycleObserver } from "./lifecycle";
 import { SankofaPluginManager } from "./plugins";
@@ -63,6 +64,12 @@ export class SankofaBrowserClient {
   private plugins!: SankofaPluginManager;
   private lifecycle!: SankofaLifecycleObserver;
   private presence: SankofaPresenceHeartbeat | null = null;
+  /** Dedicated heatmap-background snapshotter. Independent of rrweb —
+   *  fires one stability-gated SVG-foreignObject rasterization per
+   *  `(screen, viewport-bucket)` per session so the dashboard's
+   *  heatmap renders over a real screenshot instead of a blank
+   *  dimension-only placeholder. */
+  private heatmapSnapshotter: HeatmapSnapshotter | null = null;
 
   private flushIntervalMs = 5_000;
   private intervalId: number | null = null;
@@ -199,6 +206,25 @@ export class SankofaBrowserClient {
     });
     this.presence.start();
 
+    // Dedicated heatmap snapshotter — fires one stability-gated DOM
+    // raster per (screen, viewport-bucket) so the dashboard's heatmap
+    // renders over a real backdrop instead of the dimension-only
+    // placeholder that the rrweb chunk path produces.
+    this.heatmapSnapshotter = new HeatmapSnapshotter({
+      endpoint: this.props.batchUrl!.origin,
+      apiKey: this.props.apiKey!,
+      appVersion:
+        (typeof window !== "undefined" && (window as Window & { __APP_VERSION__?: string }).__APP_VERSION__) ||
+        "unknown",
+      debug: (msg, ...rest) => this.debug(String(msg), ...rest),
+    });
+    // Fire an initial capture for whatever screen tag is current at
+    // bootstrap. Subsequent screen() / pageview triggers are wired
+    // into those code paths directly.
+    if (this._currentScreen && this._currentScreen !== "Unknown") {
+      this.heatmapSnapshotter.scheduleCapture(this._currentScreen);
+    }
+
     return this;
   }
 
@@ -213,6 +239,10 @@ export class SankofaBrowserClient {
     // products the host has enabled, so the lexicon + dwell + presence
     // are always populated.
     this.emitScreenSeen(screenName, properties);
+    // Stability-gated heatmap snapshot. Deduped inside the
+    // snapshotter — repeated screen() calls on the same view are
+    // no-ops.
+    this.heatmapSnapshotter?.scheduleCapture(screenName);
     await this.track("$screen_view", { ...properties, $screen_name: screenName });
   }
 
@@ -234,6 +264,10 @@ export class SankofaBrowserClient {
       $auto_detected: true,
       $pageview_source: source,
     });
+    // Schedule a heatmap snapshot for the (possibly-auto-detected)
+    // screen. Dedupe inside the snapshotter prevents re-uploading
+    // on SPA route-change spam.
+    this.heatmapSnapshotter?.scheduleCapture(this._currentScreen);
     await this.track("$pageview", {
       $pageview_source: source,
       $pathname: window.location.pathname,
