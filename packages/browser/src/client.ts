@@ -3,6 +3,7 @@ import { SankofaAutocapture } from "./autocapture";
 import { SankofaIdentity } from "./identity";
 import { SankofaLifecycleObserver } from "./lifecycle";
 import { SankofaPluginManager } from "./plugins";
+import { SankofaPresenceHeartbeat } from "./presence";
 import {
   SankofaQueueManager,
   type TransportListener,
@@ -61,6 +62,7 @@ export class SankofaBrowserClient {
   private activity!: SankofaActivityObserver;
   private plugins!: SankofaPluginManager;
   private lifecycle!: SankofaLifecycleObserver;
+  private presence: SankofaPresenceHeartbeat | null = null;
 
   private flushIntervalMs = 5_000;
   private intervalId: number | null = null;
@@ -176,8 +178,27 @@ export class SankofaBrowserClient {
 
     this._isInitialized = true;
     this.debug("Initialized browser SDK", this.getSnapshot());
-    
+
     this.lifecycle.install();
+
+    // Live-presence heartbeat — independent of analytics flush so it
+    // ticks at its own cadence (15s) while the tab is visible. Cheap:
+    // one tiny POST per interval, paused when backgrounded.
+    this.presence = new SankofaPresenceHeartbeat({
+      batchUrl: this.props.batchUrl!,
+      apiKey: this.props.apiKey!,
+      getSnapshot: () => {
+        const s = this.getSnapshot();
+        return {
+          distinctId: s.distinctId,
+          sessionId: s.sessionId,
+          currentScreen: s.currentScreen,
+        };
+      },
+      debug: (msg, ...rest) => this.debug(msg, ...rest),
+    });
+    this.presence.start();
+
     return this;
   }
 
@@ -325,6 +346,10 @@ export class SankofaBrowserClient {
     if (this.lifecycle) this.lifecycle.uninstall();
     if (this.activity) this.activity.uninstall();
     if (this.autocapture) this.autocapture.uninstall();
+    if (this.presence) {
+      this.presence.stop();
+      this.presence = null;
+    }
     if (this.plugins) await this.plugins.shutdown();
 
     this._isInitialized = false;
