@@ -109,6 +109,31 @@ export class SankofaPluginManager {
     await check("config", "config", "Install @sankofa/config and pass configPlugin() to plugins[].");
   }
 
+  /**
+   * Collect every loaded plugin's integration audit. The browser client
+   * batches these with its own analytics audit and POSTs them to
+   * /api/v1/handshake/integrations so the dashboard's SDK Health page
+   * sees every module on this host. Errors are isolated per-plugin so
+   * one bad audit can't take down the rest.
+   */
+  async collectIntegrationStatuses(): Promise<
+    Array<{ module: string; level: "full" | "partial" | "broken"; missing: string[]; warnings: string[] }>
+  > {
+    const out: Array<{ module: string; level: "full" | "partial" | "broken"; missing: string[]; warnings: string[] }> = [];
+    await Promise.all(
+      this.plugins.map(async (plugin) => {
+        if (!plugin.checkIntegration) return;
+        try {
+          const status = await plugin.checkIntegration();
+          if (status) out.push(status);
+        } catch (error) {
+          this.debug("Plugin integration audit failed", error);
+        }
+      }),
+    );
+    return out;
+  }
+
   async notifyDistinctIdChange(
     current: SankofaClientSnapshot,
     previous: SankofaClientSnapshot,

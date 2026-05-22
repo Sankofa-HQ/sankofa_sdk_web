@@ -155,6 +155,33 @@ export function configPlugin(options: ConfigPluginOptions = {}): SankofaPlugin {
         applyHandshake(cfg) {
           singleton?.applyHandshake(cfg);
         },
+        checkIntegration() {
+          const missing: string[] = [];
+          const warnings: string[] = [];
+          if (!singleton) {
+            missing.push(
+              "Config plugin returned no instance — setup() must have failed silently. Check your @sankofa/config import.",
+            );
+          } else {
+            const valueCount = singleton.getAllKeys().length;
+            const defaultCount = Object.keys(options.defaults ?? {}).length;
+            if (valueCount === 0 && defaultCount === 0) {
+              missing.push(
+                "No values from server and no bundled defaults supplied. Every get(key, fallback) will return the inline fallback.",
+              );
+            } else if (valueCount === defaultCount && valueCount > 0) {
+              warnings.push(
+                "Only bundled defaults visible — handshake may not have completed, or the project has no config items.",
+              );
+            }
+          }
+          return {
+            module: "config",
+            level: missing.length === 0 ? "full" : missing.length >= 2 ? "broken" : "partial",
+            missing,
+            warnings,
+          };
+        },
         shutdown() {
           unregisterModuleAPI("config");
           singleton = null;

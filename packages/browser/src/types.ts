@@ -107,7 +107,16 @@ export type SankofaModuleName =
   | "deploy"
   | "catch"
   | "switch"
-  | "config";
+  | "config"
+  | "pulse";
+
+/** Shared module integration audit shape used across every Sankofa SDK. */
+export interface PluginIntegrationStatus {
+  module: string;
+  level: "full" | "partial" | "broken";
+  missing: string[];
+  warnings: string[];
+}
 
 export interface SankofaPluginInstance {
   flush?(options?: SankofaFlushOptions): Promise<void> | void;
@@ -128,6 +137,13 @@ export interface SankofaPluginInstance {
    * dev-mode warning and a silent no-op in production.
    */
   applyHandshake?(config: Record<string, unknown>): Promise<void> | void;
+  /**
+   * Self-audit hook — when present, returns the plugin's integration
+   * health status. The browser client batches these with the analytics
+   * audit and POSTs them to /api/v1/handshake/integrations so the
+   * dashboard's SDK Health surface shows every linked plugin's wiring.
+   */
+  checkIntegration?(): Promise<PluginIntegrationStatus> | PluginIntegrationStatus;
 }
 
 export interface SankofaPlugin {

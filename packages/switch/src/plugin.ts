@@ -251,6 +251,33 @@ export function switchPlugin(options: SwitchPluginOptions = {}): SankofaPlugin {
         applyHandshake(cfg) {
           singleton?.applyHandshake(cfg);
         },
+        checkIntegration() {
+          const missing: string[] = [];
+          const warnings: string[] = [];
+          if (!singleton) {
+            missing.push(
+              "Switch plugin returned no instance — setup() must have failed silently. Check your @sankofa/switch import.",
+            );
+          } else {
+            const flagCount = singleton.getAllKeys().length;
+            const defaultCount = Object.keys(options.defaults ?? {}).length;
+            if (flagCount === 0 && defaultCount === 0) {
+              missing.push(
+                "No flags from server and no bundled defaults supplied. Every getFlag(key) will return the inline fallback.",
+              );
+            } else if (flagCount === defaultCount && flagCount > 0) {
+              warnings.push(
+                "Only bundled defaults visible — handshake may not have completed, or the project has no flags.",
+              );
+            }
+          }
+          return {
+            module: "switch",
+            level: missing.length === 0 ? "full" : missing.length >= 2 ? "broken" : "partial",
+            missing,
+            warnings,
+          };
+        },
         onDistinctIdChange() {
           singleton?.onIdentityChange();
         },

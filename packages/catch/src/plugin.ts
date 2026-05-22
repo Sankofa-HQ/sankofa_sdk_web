@@ -274,6 +274,28 @@ export function catchPlugin(options: CatchPluginOptions = {}): SankofaPlugin {
         applyHandshake(cfg: unknown) {
           client.applyHandshake(cfg as CatchHandshakeConfig | undefined);
         },
+        checkIntegration() {
+          const missing: string[] = [];
+          const warnings: string[] = [];
+          if (!installed) {
+            warnings.push(
+              "Global error handlers not installed — uncaught exceptions + promise rejections won't be auto-captured. Pass captureUnhandled/captureRejections to catchPlugin.",
+            );
+          }
+          // `client.isEnabled()` is the post-handshake gate; we'd love
+          // to read it here but the CatchClient interface doesn't expose
+          // one yet. Surface a heads-up so operators know the audit is
+          // shallower than RN/Flutter rather than silently claim full.
+          warnings.push(
+            "Web Catch audit is conservative — currently only checks handler installation. Deeper checks land in a future minor version.",
+          );
+          return {
+            module: "catch",
+            level: missing.length === 0 ? "full" : missing.length >= 2 ? "broken" : "partial",
+            missing,
+            warnings,
+          };
+        },
         async flush() {
           await client.flush();
           await perfTransport?.flush();

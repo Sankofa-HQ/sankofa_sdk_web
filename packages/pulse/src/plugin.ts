@@ -442,6 +442,31 @@ export function pulsePlugin(options: PulsePluginOptions = {}): SankofaPlugin {
           singleton?.dismiss();
           singleton = null;
         },
+        checkIntegration() {
+          const missing: string[] = [];
+          const warnings: string[] = [];
+          if (!singleton) {
+            missing.push(
+              "Pulse plugin returned no instance — setup() failed silently. Check that pulsePlugin() is included in Sankofa.init({ plugins: [...] }).",
+            );
+          }
+          if (!snap.apiKey) {
+            missing.push(
+              "No API key reached the Pulse plugin — Sankofa.init() may not have resolved before plugin setup.",
+            );
+          }
+          if (typeof window === "undefined") {
+            warnings.push(
+              "Running outside a browser context — Pulse surveys cannot render.",
+            );
+          }
+          return {
+            module: "pulse",
+            level: missing.length === 0 ? "full" : missing.length >= 2 ? "broken" : "partial",
+            missing,
+            warnings,
+          };
+        },
         onDistinctIdChange() {
           // Identity flipped — dismiss any in-flight survey so the
           // submit picks up the new identity. The host can re-show

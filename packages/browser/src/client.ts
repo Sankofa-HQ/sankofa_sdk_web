@@ -172,20 +172,22 @@ export class SankofaBrowserClient {
     await this.plugins.routeHandshake(handshakeModules);
 
     // ── Reverse handshake — SDK Health report ───────────────────────
-    // Audit the host's integration and POST the result to
-    // /api/v1/handshake/integrations so the dashboard's SDK Health
-    // surface reflects this browser. Fire-and-forget; errors are
-    // swallowed inside the reporter.
+    // Audit the host's integration (analytics + every loaded plugin)
+    // and POST the batch to /api/v1/handshake/integrations so the
+    // dashboard's SDK Health surface reflects this browser. Fire-and-
+    // forget; errors are swallowed inside the reporter.
     try {
-      const status = auditWebIntegration({
+      const analyticsStatus = auditWebIntegration({
         handshakeOk: handshakeModules !== null,
         appVersionFromHost: this.props.appVersion.length > 0,
       });
+      const pluginStatuses = await this.plugins.collectIntegrationStatuses();
+      const batch = [analyticsStatus, ...pluginStatuses];
       if (this.props.handshakeUrl) {
         void reportIntegrationStatuses({
           apiKey: this.props.apiKey,
           handshakeBaseUrl: this.props.handshakeUrl,
-          statuses: [status],
+          statuses: batch,
           appVersion: this.props.appVersion || undefined,
           debug: this.props.debug,
         });
