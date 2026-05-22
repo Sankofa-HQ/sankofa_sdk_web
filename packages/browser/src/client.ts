@@ -20,6 +20,8 @@ import type {
   SankofaReplayConfig,
   SankofaTrackPayload,
 } from "./types";
+import { auditWebIntegration } from "./integration";
+import { reportIntegrationStatuses } from "./integration-reporter";
 import {
   SANKOFA_BROWSER_VERSION,
   hashString,
@@ -43,6 +45,8 @@ export class SankofaBrowserClient {
     catchIngestUrl: URL | null;
     storagePrefix: string;
     debug: boolean;
+    /** Host-provided marketing version. Empty when the host didn't set one. */
+    appVersion: string;
   } = {
     apiKey: null,
     batchUrl: null,
@@ -53,6 +57,7 @@ export class SankofaBrowserClient {
     catchIngestUrl: null,
     storagePrefix: "sankofa:browser",
     debug: false,
+    appVersion: "",
   };
   private replayConfig: SankofaReplayConfig | null = null;
 
@@ -92,6 +97,7 @@ export class SankofaBrowserClient {
     this.props.switchExposuresUrl = resolveSwitchExposuresUrl(options.endpoint);
     this.props.catchIngestUrl = resolveCatchIngestUrl(options.endpoint);
     this.props.debug = Boolean(options.debug);
+    this.props.appVersion = (options.appVersion ?? "").trim();
     this.flushIntervalMs = options.flushIntervalMs ?? 5_000;
     this.props.storagePrefix = `sankofa:${hashString(
       `${this.props.batchUrl.origin}|${this.props.batchUrl.pathname}|${this.props.apiKey}`,
@@ -164,6 +170,29 @@ export class SankofaBrowserClient {
     // handshake-driven module flags to them. Runs as a no-op for modules
     // without a corresponding plugin (with a dev warning).
     await this.plugins.routeHandshake(handshakeModules);
+
+    // ── Reverse handshake — SDK Health report ───────────────────────
+    // Audit the host's integration and POST the result to
+    // /api/v1/handshake/integrations so the dashboard's SDK Health
+    // surface reflects this browser. Fire-and-forget; errors are
+    // swallowed inside the reporter.
+    try {
+      const status = auditWebIntegration({
+        handshakeOk: handshakeModules !== null,
+        appVersionFromHost: this.props.appVersion.length > 0,
+      });
+      if (this.props.handshakeUrl) {
+        void reportIntegrationStatuses({
+          apiKey: this.props.apiKey,
+          handshakeBaseUrl: this.props.handshakeUrl,
+          statuses: [status],
+          appVersion: this.props.appVersion || undefined,
+          debug: this.props.debug,
+        });
+      }
+    } catch (err) {
+      this.debug("Integration audit threw — swallowed", err);
+    }
 
     this.intervalId = window.setInterval(() => {
       void this.flush({ reason: "timer" });
@@ -569,11 +598,11 @@ export class SankofaBrowserClient {
     if (typeof navigator !== "undefined" && navigator.language) {
       urlWithInstalled.searchParams.set("locale", navigator.language);
     }
-    // App version — fall back to the SDK lib version so the server's
-    // semver comparisons always have something to work with. Host apps
-    // that want precise version targeting should configure it via
-    // `init({ appVersion })` when we add that option.
-    const appVersion = SANKOFA_BROWSER_VERSION;
+    // App version — host's `init({ appVersion })` wins; fall back to the
+    // SDK lib version so the server's semver comparisons always have
+    // something to work with. The SDK Health audit flags fallback usage
+    // because version cohorts misclassify hosts that don't set one.
+    const appVersion = this.props.appVersion || SANKOFA_BROWSER_VERSION;
     if (appVersion) {
       urlWithInstalled.searchParams.set("app_version", appVersion);
     }

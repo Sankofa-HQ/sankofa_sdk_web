@@ -150,6 +150,16 @@ export interface SankofaInitOptions {
   flushIntervalMs?: number;
   autocapture?: boolean | SankofaAutocaptureOptions;
   plugins?: SankofaPlugin[];
+  /**
+   * Host application's marketing version, e.g. "1.4.2". Forwarded on
+   * every handshake + ingest call so release-rollout rules and version
+   * cohorts can target this specific host build.
+   *
+   * Optional — when omitted, the server falls back to the SDK library
+   * version (which is almost never what targeting rules expect, so
+   * SDK Health flags this as a warning).
+   */
+  appVersion?: string;
 }
 
 export interface QueuedRecord<T> {
