@@ -1,6 +1,8 @@
 {
   "name": "@sankofa/switch",
-  "version": "0.1.2",
+  "version": "0.2.0",
+  "description": "Sankofa Switch — feature flags, A/B testing, and progressive rollouts for the browser.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
@@ -26,15 +28,19 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "bundle": "node esbuild.config.js"
+    "bundle": "node esbuild.config.js",
+    "prepublishOnly": "npm run build && npm run bundle"
   },
-  "sideEffects": false,
   "dependencies": {
-    "@sankofa/browser": "0.1.2"
+    "@sankofa/browser": "0.2.0"
   },
   "devDependencies": {
     "esbuild": "^0.27.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
