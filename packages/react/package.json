@@ -1,6 +1,12 @@
 {
   "name": "@sankofa/react",
-  "version": "0.1.2",
+  "version": "0.2.0",
+  "description": "Sankofa React — provider and hooks bindings for the Sankofa Web SDK.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sankofa-HQ/sankofa_sdk_web"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -14,13 +20,13 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
-  "sideEffects": false,
   "dependencies": {
-    "@sankofa/browser": "0.1.2",
-    "@sankofa/pulse": "0.1.2",
+    "@sankofa/browser": "0.2.0",
+    "@sankofa/pulse": "0.2.0",
     "react": "^19.2.3"
   },
   "peerDependencies": {
@@ -28,5 +34,8 @@
   },
   "devDependencies": {
     "@types/react": "^19.2.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
