@@ -1,6 +1,7 @@
 import type { SankofaPlugin, SankofaPluginContext } from "@sankofa/browser";
 import { registerModuleAPI, unregisterModuleAPI } from "@sankofa/browser";
 import { ConfigCache } from "./cache";
+import { coerceConfigValue } from "./coerce";
 import type {
   ConfigChangeListener,
   ConfigHandshakeConfig,
@@ -46,7 +47,7 @@ class ConfigClient implements SankofaConfigAPI {
   get<V>(key: string, defaultValue: V): V {
     const decision = this.resolve(key);
     if (!decision) return defaultValue;
-    return decision.value as V;
+    return coerceConfigValue(decision.value, defaultValue);
   }
 
   getDecision<V = unknown>(key: string): ItemDecision<V> | null {
