@@ -31,13 +31,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "bundle": "node esbuild.config.js",
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
     "prepublishOnly": "npm run build && npm run bundle"
   },
   "dependencies": {
     "@sankofa/browser": "0.2.0"
   },
   "devDependencies": {
-    "esbuild": "^0.27.4"
+    "esbuild": "^0.27.4",
+    "tsx": "^4.19.0"
   },
   "publishConfig": {
     "access": "public"

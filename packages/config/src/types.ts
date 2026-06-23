@@ -48,11 +48,12 @@ export type ConfigChangeListener = (decision: ItemDecision | null) => void;
 export interface SankofaConfigAPI {
   /**
    * Typed lookup. The generic carries the expected type so the caller
-   * gets autocomplete on the return value. No runtime validation —
-   * the server has already enforced the type at write time, so a
-   * `get<number>("max_upload_mb", 10)` will always return a number
-   * when the item is defined and of type int/float. Missing items
-   * fall through to `defaultValue`.
+   * gets autocomplete on the return value. The stored value is coerced
+   * to the runtime type implied by `defaultValue` — matching the
+   * Flutter/Android/iOS SDKs — so a server `bool` that arrives as `1`
+   * or `"true"` still reads back as `true`. A value that can't be
+   * safely coerced, or a missing item, falls through to `defaultValue`
+   * (never a wrong-typed value).
    */
   get<V>(key: string, defaultValue: V): V;
 
@@ -79,4 +80,7 @@ export interface SankofaConfigAPI {
    * removed (callback receives null).
    */
   onChange(key: string, listener: ConfigChangeListener): () => void;
+
+  /** The etag of the last applied handshake payload (empty until one lands). */
+  getEtag(): string;
 }
