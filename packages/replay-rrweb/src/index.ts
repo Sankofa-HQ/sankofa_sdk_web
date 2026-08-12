@@ -161,19 +161,64 @@ export function rrwebReplayPlugin(
         maskAllInputs: remoteConfig ? remoteConfig.mask_all_inputs : (options.maskAllInputs ?? DEFAULT_OPTIONS.maskAllInputs),
       };
 
-      // Initial Sampling
-      const isSampledIn = remoteConfig ? Math.random() < remoteConfig.sample_rate : true;
-      let isForcedHighFidelity = false;
-
       if (!config.enabled || typeof window === "undefined") {
         return {};
       }
 
       let snapshot = context.getSnapshot();
+
+      // ── Session-scoped persistence ─────────────────────────────────────
+      // Multi-page apps tear this plugin down on every navigation, but the
+      // SESSION spans pages. Two decisions must therefore outlive the page:
+      //
+      //   1. The sampling roll — re-rolling per page load turns a 50%-sampled
+      //      session into swiss cheese (random pages missing from the replay).
+      //   2. The chunk counter — restarting at 0 per page makes chunk_index
+      //      collide across page loads within one session, which scrambles
+      //      manifests ordered by index.
+      //
+      // sessionStorage matches the lifetime we need (survives navigations,
+      // dies with the tab) and degrades safely: if unavailable, behavior is
+      // exactly the old per-page behavior.
+      const sessionScopedKey = (kind: string, sessionId: string) =>
+        `sankofa:replay:${kind}:${sessionId}`;
+      const readSessionValue = (kind: string, sessionId: string): string | null => {
+        try {
+          return window.sessionStorage.getItem(sessionScopedKey(kind, sessionId));
+        } catch {
+          return null;
+        }
+      };
+      const writeSessionValue = (kind: string, sessionId: string, value: string) => {
+        try {
+          window.sessionStorage.setItem(sessionScopedKey(kind, sessionId), value);
+        } catch {
+          /* storage full or blocked — degrade to per-page behavior */
+        }
+      };
+
+      const rollSampling = (sessionId: string): boolean => {
+        if (!remoteConfig) return true;
+        const stored = readSessionValue("sampled", sessionId);
+        if (stored !== null) return stored === "1";
+        const sampled = Math.random() < remoteConfig.sample_rate;
+        writeSessionValue("sampled", sessionId, sampled ? "1" : "0");
+        return sampled;
+      };
+
+      const initialChunkIndex = (sessionId: string): number => {
+        const stored = readSessionValue("chunkIndex", sessionId);
+        const parsed = stored === null ? NaN : Number.parseInt(stored, 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+      };
+
+      let isSampledIn = rollSampling(snapshot.sessionId);
+      let isForcedHighFidelity = false;
+
       let buffer: eventWithTime[] = [];
       let bufferSessionId: string | null = null;
       let bufferDistinctId: string | null = null;
-      let chunkIndex = 0;
+      let chunkIndex = initialChunkIndex(snapshot.sessionId);
       let chunkStartedAt: number | null = null;
       let stopRecording: (() => void) | undefined;
       let flushTimer: number | null = null;
@@ -559,6 +604,8 @@ export function rrwebReplayPlugin(
         bufferDistinctId = null;
         chunkStartedAt = null;
         chunkIndex += 1;
+        // Persist so the next page load of this session continues numbering.
+        writeSessionValue("chunkIndex", sessionId, String(chunkIndex));
 
         // The Sankofa replay worker (server/engine/ee/replay/worker.go) reads
         // device_context.{screen_width,screen_height} to normalize interaction
@@ -664,7 +711,22 @@ export function rrwebReplayPlugin(
         await flushPersistedChunks(flushOptions);
       };
 
-      const flushPersistedChunks = async (flushOptions?: SankofaFlushOptions) => {
+      // One flush in flight at a time. The interval timer, buffer-full
+      // flushes and lifecycle flushes all funnel here concurrently; without
+      // the mutex two of them can read the same queued rows and upload the
+      // same chunk twice — and the server keeps both copies, so every event
+      // in that chunk plays twice in the replay.
+      let uploadInFlight: Promise<void> | null = null;
+
+      const flushPersistedChunks = (flushOptions?: SankofaFlushOptions): Promise<void> => {
+        if (uploadInFlight) return uploadInFlight;
+        uploadInFlight = drainPersistedChunks(flushOptions).finally(() => {
+          uploadInFlight = null;
+        });
+        return uploadInFlight;
+      };
+
+      const drainPersistedChunks = async (flushOptions?: SankofaFlushOptions) => {
         const queued = await queue.getAll(10);
         for (const chunk of queued) {
           const payload = Uint8Array.from(chunk.value.payload);
@@ -734,8 +796,8 @@ export function rrwebReplayPlugin(
           });
         },
         async onDistinctIdChange(current: SankofaClientSnapshot) {
-          const previousSnapshot = snapshot;
-          snapshot = previousSnapshot;
+          // Flush the buffer under the snapshot it was recorded with, THEN
+          // adopt the new identity for subsequent chunks.
           await flushBufferedChunk({
             reason: "plugin",
           });
@@ -747,12 +809,12 @@ export function rrwebReplayPlugin(
             reason: "plugin",
           });
           snapshot = current;
-          chunkIndex = 0;
-          
-          // Re-evaluate sampling for new session
+          chunkIndex = initialChunkIndex(current.sessionId);
+
+          // One sampling roll per session, remembered across page loads.
           if (!isForcedHighFidelity) {
-              const sampled = remoteConfig ? Math.random() < remoteConfig.sample_rate : true;
-              if (sampled) {
+              isSampledIn = rollSampling(current.sessionId);
+              if (isSampledIn) {
                   startRecording();
               } else {
                   stopAndCleanup();
